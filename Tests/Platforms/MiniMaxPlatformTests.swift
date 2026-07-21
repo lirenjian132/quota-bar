@@ -335,8 +335,9 @@ final class MiniMaxPlatformTests: XCTestCase {
         }
     }
 
-    func testFetchUsageWeeklyOmittedWhenStatusIsNotOne() async throws {
-        // current_weekly_status 不是 1 (例如 3 = 无周限额 plan) → 只返回 5h, 不返回 weekly
+    func testFetchUsageWeeklyUnlimitedWhenStatusIsNotOne() async throws {
+        // current_weekly_status 不是 1 → 返回 weekly_limit_unlimited (不是省略).
+        // 跟 spec "可配置指标显示" 一致: 上层永远按 metrics 列表渲染.
         let json = """
         {
             "model_remains": [{
@@ -360,7 +361,43 @@ final class MiniMaxPlatformTests: XCTestCase {
         )
 
         let result = try await service.fetchUsage(config: config, network: mockNetwork)
-        XCTAssertEqual(result.metrics.count, 1, "weekly metric should be omitted when current_weekly_status != 1")
+        XCTAssertEqual(result.metrics.count, 2)
         XCTAssertEqual(result.metrics[0].label, "five_hour")
+        XCTAssertEqual(result.metrics[1].label, "weekly_limit_unlimited")
+    }
+
+    func testFetchUsageReturnsUnlimitedWeeklyWhenStatusIsNotOne() async throws {
+        // current_weekly_status == 3 (无周限额 plan) → 应返回 weekly_limit_unlimited metric,
+        // 不再"省略"周指标. 这让上层 UI 永远可以按 metrics 列表渲染, 不需要特判.
+        let json = """
+        {
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_remaining_percent": 80.0,
+                "current_weekly_remaining_percent": 50.0,
+                "current_weekly_status": 3
+            }]
+        }
+        """
+        service.clearCache()
+        mockNetwork.mockData = json.data(using: .utf8)
+        mockNetwork.mockResponse = MockNetworkService.makeResponse(url: "https://test.com", statusCode: 200)
+
+        let config = PlatformConfigData(
+            platformType: .minimax_cn,
+            apiBaseURL: "https://test.com",
+            authHeader: "Authorization",
+            authPrefix: "Bearer ",
+            apiKey: "test-key"
+        )
+
+        let result = try await service.fetchUsage(config: config, network: mockNetwork)
+
+        XCTAssertEqual(result.metrics.count, 2)
+        XCTAssertEqual(result.metrics[0].label, "five_hour")
+        XCTAssertEqual(result.metrics[1].label, "weekly_limit_unlimited")
+        XCTAssertNil(result.metrics[1].totalValue)
+        XCTAssertEqual(result.metrics[1].unit, "unlimited")
+        XCTAssertNil(result.metrics[1].resetTime)
     }
 }

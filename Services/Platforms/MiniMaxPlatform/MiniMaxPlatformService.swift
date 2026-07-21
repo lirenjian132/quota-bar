@@ -123,14 +123,27 @@ final class MiniMaxPlatformAPIService: PlatformAPIService {
             UsageMetric(label: "five_hour", currentValue: dailyRemainingPct, totalValue: 100, unit: "%", resetTime: dailyResetTime)
         ]
 
-        // 周限额仅在 current_weekly_status == 1 时展示. 其它值(包括 nil)表示该 plan
-        // 无周限额 — 跟上游 cc-switch 的语义对齐, 避免展示过时的/随机的 weekly 数据.
+        // 周限额总是 append, 但状态不同时用不同 label + 字段:
+        //   - currentWeeklyStatus == 1 + 无加成 → weekly_limit (剩余百分比)
+        //   - currentWeeklyStatus == 1 + 加成   → weekly_limit_boosted (剩余百分比)
+        //   - 其它值 (3 / nil)                  → weekly_limit_unlimited (∞, totalValue=nil)
+        // 这样上层永远按 metrics 列表渲染, 不需要"如果只有一个 metric 就特殊处理"这种特判.
         if model.currentWeeklyStatus == 1 {
             // 周额度加成 (weekly_boost_permille > 1000 表示有加成, 如 1500 = 150%):
             // 区分"标准 100%"和"加成 150%"两种 plan, 用不同 label 让 UI 显示对应类型.
             let boosted = (model.weeklyBoostPermille ?? 0) > 1000
             metrics.append(
                 UsageMetric(label: boosted ? "weekly_limit_boosted" : "weekly_limit", currentValue: weeklyRemainingPct, totalValue: 100, unit: "%", resetTime: weeklyResetTime)
+            )
+        } else {
+            metrics.append(
+                UsageMetric(
+                    label: "weekly_limit_unlimited",
+                    currentValue: 0,
+                    totalValue: nil,
+                    unit: "unlimited",
+                    resetTime: nil
+                )
             )
         }
 

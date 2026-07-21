@@ -20,7 +20,10 @@ class StatusBarController {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
-        let statusBarContentView = StatusBarView(platformData: viewModel.activePlatformData)
+        let statusBarContentView = StatusBarView(
+            platformData: viewModel.activePlatformData,
+            enabledMetrics: ConfigService.shared.enabledMetrics(for: .minimax_cn)
+        )
         statusBarView = RightClickStatusBarView(rootView: statusBarContentView)
 
         guard let button = statusItem.button else {
@@ -57,6 +60,14 @@ class StatusBarController {
             self,
             selector: #selector(handlePlatformChanged),
             name: .platformEnabledChanged,
+            object: nil
+        )
+
+        // 启用 metric 变化: 重绘所有 status item (主 item + 所有 pinned item)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleEnabledMetricsChanged(_:)),
+            name: .enabledMetricsChanged,
             object: nil
         )
 
@@ -201,6 +212,38 @@ class StatusBarController {
         let platformItem = NSMenuItem(title: I18nService.shared.translate("menu.platforms"), action: nil, keyEquivalent: "")
         platformItem.submenu = platformMenu
 
+        // Enabled Metrics submenu: 每个平台一个子菜单, 含该平台所有可显示指标的多选.
+        // 已勾 2 个时第 3 个菜单项禁用, 不让超过上限.
+        // 注意: NSMenuItem.representedObject 桥接到 NSDictionary 时, Swift enum
+        // (如 PlatformType) 会被包成 NSObject wrapper, 取时 as? PlatformType 会失败.
+        // 解决: 只用 NSObject 友好的值 (String), 在 action 里用 rawValue 反查.
+        let enabledMetricsMenu = NSMenu()
+        let availableLabels = ["five_hour", "weekly_limit", "mcp_monthly"]
+        for platform in PlatformType.allCases {
+            let platSub = NSMenu()
+            let current = ConfigService.shared.enabledMetrics(for: platform)
+            for label in availableLabels {
+                let item = NSMenuItem(
+                    title: I18nService.shared.translate("menu.metric.\(label)"),
+                    action: #selector(toggleEnabledMetric(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                // 用 String 字典, 避免 Swift enum bridge 问题
+                item.representedObject = ["platform": platform.rawValue, "label": label]
+                let checked = current.contains(label)
+                let atLimit = current.count >= 2 && !checked
+                item.state = checked ? .on : .off
+                item.isEnabled = !atLimit
+                platSub.addItem(item)
+            }
+            let platTitleItem = NSMenuItem(title: platform.displayName, action: nil, keyEquivalent: "")
+            platTitleItem.submenu = platSub
+            enabledMetricsMenu.addItem(platTitleItem)
+        }
+        let enabledMetricsItem = NSMenuItem(title: I18nService.shared.translate("menu.enabledMetrics"), action: nil, keyEquivalent: "")
+        enabledMetricsItem.submenu = enabledMetricsMenu
+
         // Language submenu
         let languageMenu = NSMenu()
         let isEnglish = I18nService.shared.currentLocale == "en"
@@ -228,6 +271,7 @@ class StatusBarController {
         rootMenu.addItem(displaySettingsItem)
         rootMenu.addItem(refreshItem)
         rootMenu.addItem(platformItem)
+        rootMenu.addItem(enabledMetricsItem)
         rootMenu.addItem(languageItem)
         rootMenu.addItem(NSMenuItem.separator())
 
@@ -327,6 +371,31 @@ class StatusBarController {
         updateStatusBarView()
     }
 
+    @objc private func toggleEnabledMetric(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: Any],
+              let platformRaw = payload["platform"] as? String,
+              let platform = PlatformType(rawValue: platformRaw),
+              let label = payload["label"] as? String else { return }
+
+        var current = ConfigService.shared.enabledMetrics(for: platform)
+        if current.contains(label) {
+            current.removeAll { $0 == label }
+        } else {
+            current.append(label)
+        }
+        ConfigService.shared.setEnabledMetrics(current, for: platform)
+        // 通知已由 setter 发, 无需再手动 post.
+        // 同步更新菜单项状态 (因为菜单已弹出, 不会重新构造).
+        let atLimit = current.count >= 2
+        for item in sender.menu?.items ?? [] {
+            guard let p = item.representedObject as? [String: Any],
+                  let l = p["label"] as? String else { continue }
+            let isCurrent = current.contains(l)
+            item.state = isCurrent ? .on : .off
+            item.isEnabled = !(atLimit && !isCurrent)
+        }
+    }
+
     @objc private func setRefreshInterval(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String,
               let interval = RefreshInterval(rawValue: rawValue) else { return }
@@ -417,9 +486,11 @@ class StatusBarController {
     // MARK: - Update
 
     private func updateStatusBarView() {
+        let active = viewModel.activePlatform
         statusBarView.update(rootView: StatusBarView(
             platformData: viewModel.activePlatformData,
-            displayMode: ConfigService.shared.displayMode
+            displayMode: ConfigService.shared.displayMode,
+            enabledMetrics: ConfigService.shared.enabledMetrics(for: active)
         ))
         statusBarView.layoutSubtreeIfNeeded()
     }
@@ -449,7 +520,8 @@ class StatusBarController {
         statusItem.isVisible = true
         statusBarView.update(rootView: StatusBarView(
             platformData: viewModel.activePlatformData,
-            displayMode: ConfigService.shared.displayMode
+            displayMode: ConfigService.shared.displayMode,
+            enabledMetrics: ConfigService.shared.enabledMetrics(for: viewModel.activePlatform)
         ))
         statusBarView.layoutSubtreeIfNeeded()
         statusItem.length = max(
@@ -464,7 +536,8 @@ class StatusBarController {
 
         view.update(rootView: StatusBarView(
             platformData: data,
-            displayMode: ConfigService.shared.displayMode
+            displayMode: ConfigService.shared.displayMode,
+            enabledMetrics: ConfigService.shared.enabledMetrics(for: platform)
         ))
         view.layoutSubtreeIfNeeded()
 
@@ -486,6 +559,12 @@ class StatusBarController {
         for platform in PlatformType.allPinned where viewModel.platformData[platform] == nil {
             viewModel.fetchUsage(for: platform)
         }
+    }
+
+    // 启用 metric 变化: 通知的 object 是 PlatformType (来自 setter), 用于决定重绘范围.
+    // 简化: 直接重绘全部 status item, 避免按平台分支.
+    @objc private func handleEnabledMetricsChanged(_ note: Notification) {
+        updateAll(data: viewModel.platformData)
     }
 
     // 根据当前 isPinned 状态, 增删 NSStatusItem.
@@ -512,7 +591,8 @@ class StatusBarController {
 
         let view = RightClickStatusBarView(rootView: StatusBarView(
             platformData: viewModel.platformData[platform],
-            displayMode: ConfigService.shared.displayMode
+            displayMode: ConfigService.shared.displayMode,
+            enabledMetrics: ConfigService.shared.enabledMetrics(for: platform)
         ))
 
         guard let button = item.button else { return }

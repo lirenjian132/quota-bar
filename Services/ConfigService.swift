@@ -116,4 +116,50 @@ final class ConfigService {
             UserDefaults.standard.removeObject(forKey: "\(prefix).pinned")
         }
     }
+
+    // MARK: - Enabled Metrics
+
+    /// 每个平台用户勾选要在菜单栏显示的 metric label 列表. 顺序即显示顺序.
+    /// getter 优先读 UserDefaults, 无值时返回平台默认值 (首次安装 / 老用户升级).
+    func enabledMetrics(for platform: PlatformType) -> [String] {
+        configLock.lock()
+        defer { configLock.unlock() }
+        let key = "quotabar.platform.\(platform.rawValue).enabledMetrics"
+        if let raw = UserDefaults.standard.string(forKey: key),
+           let data = raw.data(using: .utf8),
+           let labels = try? JSONDecoder().decode([String].self, from: data),
+           !labels.isEmpty, labels.count <= 2 {
+            return labels
+        }
+        return Self.defaultEnabledMetrics(for: platform)
+    }
+
+    /// 平台首次安装的默认勾选. 改了这里会改变新用户体验, 不影响已配置的用户.
+    static func defaultEnabledMetrics(for platform: PlatformType) -> [String] {
+        switch platform {
+        case .minimax_cn:
+            return ["five_hour"]
+        case .glm_cn:
+            return ["five_hour", "weekly_limit"]
+        }
+    }
+
+    /// 设置平台启用的 metric label 列表. 拒绝空数组 (保留旧值) 和长度 > 2 的数组.
+    /// 写入成功时发 `.enabledMetricsChanged` 通知.
+    func setEnabledMetrics(_ labels: [String], for platform: PlatformType) {
+        guard !labels.isEmpty, labels.count <= 2 else { return }
+
+        configLock.lock()
+        let key = "quotabar.platform.\(platform.rawValue).enabledMetrics"
+        let encoded = (try? JSONEncoder().encode(labels)).flatMap { String(data: $0, encoding: .utf8) }
+        configLock.unlock()
+
+        guard let encoded else { return }
+        UserDefaults.standard.set(encoded, forKey: key)
+        NotificationCenter.default.post(name: .enabledMetricsChanged, object: platform)
+    }
+}
+
+extension Notification.Name {
+    static let enabledMetricsChanged = Notification.Name("enabledMetricsChanged")
 }

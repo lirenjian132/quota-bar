@@ -23,6 +23,7 @@ A macOS menu bar app for viewing multiple AI platform API usage (MiniMax, GLM, D
   - Red: remaining < 10%
 - Left-click to open details popover
 - Right-click context menu for quick actions
+- Selectable metrics per platform: choose up to 2 of 5-hour / weekly / MCP via right-click menu; menu bar adapts font size automatically
 - API Token configuration and management
 - Sparkle auto-update support
 
