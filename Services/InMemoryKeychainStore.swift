@@ -1,6 +1,6 @@
 import Foundation
-@testable import QuotaBar
 
+/// KeychainStoring 的内存实现: 单元测试 / 测试宿主进程用, 见 AppEnvironment.
 final class InMemoryKeychainStore: KeychainStoring {
     private var storage: [String: String] = [:]
     var setError: Error?
