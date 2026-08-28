@@ -2,6 +2,18 @@
 
 本项目的所有重要变更记录。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [2.2.0] - 未发布
+
+### Added
+- **多账号支持**：同一平台可添加多个账号（如主备两个 MiniMax），右键菜单「平台」→「添加账号…」
+- 账号管理：重命名、删除（带确认，连带清理 Keychain）、左移/右移调整状态栏显示顺序
+- 新建账号取消未填 key 时自动回收，不留空壳；已删除账号的 id 永不复用（防 Keychain 撞 key）
+
+### Fixed
+- **测试隔离根治**：测试进程改走独立 UserDefaults suite + 内存 Keychain，不再触碰用户真实配置，也不再因构建签名变化触发系统登录密码弹窗
+- 老用户升级：按平台类型的旧配置 key 一次性迁移到按账号实例的新结构（含启用/钉选/指标勾选/激活状态），Keychain 中的 key 无需迁移
+- 清理已删平台（DeepSeek/MiMo/StepFun 等）在 UserDefaults 的残留 key（含老版本明文 api_key）
+
 ## [2.1.0] - 未发布
 
 ### Added

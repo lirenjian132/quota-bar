@@ -43,7 +43,10 @@ brew install create-dmg
 | `Services/Platforms/MiniMaxPlatform/` | MiniMax API service |
 | `Services/Platforms/DeepSeekPlatform/` | DeepSeek API service |
 | `Services/Platforms/PlatformManager.swift` | Orchestrates all platform services |
-| `Services/Platforms/PlatformConfigStore.swift` | Per-platform config file management |
+| `Services/Platforms/PlatformConfigStore.swift` | Per-instance config (UserDefaults dict + Keychain key) |
+| `Services/Platforms/PlatformInstanceStore.swift` | 账号实例注册表 + 老版本迁移 + 增删改移 |
+| `Services/AppEnvironment.swift` | 测试进程存储隔离路由 |
+| `Services/KeychainStore.swift` | API key 的 Keychain 存取 |
 | `Services/ConfigService.swift` | Global config (display mode, active platform, locale) |
 | `Services/NetworkService.swift` | Network abstraction for testability |
 | `StatusBar/` | Menu bar UI - `StatusBarController` manages NSStatusItem |
@@ -57,6 +60,9 @@ brew install create-dmg
 - `PlatformAPIService` - each platform implements this for API calls
 - `NetworkService` - network abstraction (URLSession wrapper for testability)
 - `PlatformType` - enum identifying supported platforms
+- `PlatformInstance` - 账号实例 (同一平台可多账号); `PlatformInstanceStore` 持有全部实例
+- `KeychainStoring` - Keychain abstraction (`KeychainStore` 生产 / `InMemoryKeychainStore` 测试)
+- `AppEnvironment` - 测试进程存储路由: 单元测试自动走隔离 defaults suite + 内存 Keychain, **测试永不触碰真实配置** (新写测试勿直接用 UserDefaults.standard / KeychainStore)
 
 ### Key Patterns
 
