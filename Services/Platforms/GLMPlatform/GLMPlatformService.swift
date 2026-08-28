@@ -142,7 +142,8 @@ final class GLMPlatformAPIService: PlatformAPIService {
 
         let usageData = PlatformUsageData(
             platform: config.platformType,
-            displayName: config.platformType.displayName,
+            instanceID: config.instanceID,
+            displayName: config.displayName,
             metrics: metrics,
             lastUpdated: Date(),
             isHealthy: isHealthy

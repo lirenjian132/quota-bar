@@ -2,10 +2,11 @@ import XCTest
 @testable import QuotaBar
 
 final class ConfigServiceTests: XCTestCase {
-    func testDefaultActivePlatform() {
+    func testDefaultActiveInstance() {
         let service = ConfigService.shared
-        // Should have a valid active platform
-        XCTAssertTrue(PlatformType.allCases.contains(service.activePlatform))
+        // Should have a valid active instance
+        let instance = service.activeInstance
+        XCTAssertTrue(PlatformInstanceStore.shared.instances.contains(where: { $0.id == instance.id }))
     }
 
     func testDefaultDisplayMode() {
@@ -13,23 +14,24 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertNotNil(service.displayMode)
     }
 
-    func testConfiguredPlatformsReturnsArray() {
+    func testConfiguredInstancesReturnsArray() {
         let service = ConfigService.shared
-        let platforms = service.configuredPlatforms()
-        XCTAssertNotNil(platforms)
+        let instances = service.configuredInstances()
+        XCTAssertNotNil(instances)
     }
 
     func testStoreForPlatformReturnsSameInstance() {
         let service = ConfigService.shared
-        let store1 = service.store(for: .glm_cn)
-        let store2 = service.store(for: .glm_cn)
+        let instance = PlatformInstance(id: "glm_cn", platformType: .glm_cn, displayName: "")
+        let store1 = service.store(for: instance)
+        let store2 = service.store(for: instance)
         XCTAssertTrue(store1 === store2)
     }
 
     func testStoreForDifferentPlatformsReturnsDifferentInstances() {
         let service = ConfigService.shared
-        let store1 = service.store(for: .minimax_cn)
-        let store2 = service.store(for: .glm_cn)
+        let store1 = service.store(for: PlatformInstance(id: "minimax_cn", platformType: .minimax_cn, displayName: ""))
+        let store2 = service.store(for: PlatformInstance(id: "glm_cn", platformType: .glm_cn, displayName: ""))
         XCTAssertFalse(store1 === store2)
     }
 }

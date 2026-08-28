@@ -12,29 +12,29 @@ struct PlatformSelectionView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(PlatformType.allCases, id: \.self) { platform in
+                    ForEach(PlatformInstanceStore.shared.instances) { instance in
                         Toggle(isOn: Binding(
-                            get: { platform.isEnabled },
+                            get: { instance.isEnabled },
                             set: { newValue in
-                                PlatformManager.shared.setPlatformEnabled(newValue, for: platform)
+                                PlatformManager.shared.setPlatformEnabled(newValue, for: instance)
                                 if newValue {
-                                    viewModel.switchActivePlatform(platform)
+                                    viewModel.switchActiveInstance(instance)
                                 }
                                 Task { await viewModel.fetchAllUsage() }
                             }
                         )) {
                             HStack {
-                                Text(platform.displayName)
+                                Text(instance.displayTitle)
                                     .font(.body)
                                 Spacer()
                             }
                         }
-                        .disabled(PlatformManager.shared.isLastEnabledPlatform(platform) && platform.isEnabled)
+                        .disabled(PlatformManager.shared.isLastEnabledInstance(instance) && instance.isEnabled)
                     }
                 }
             }
 
-            if PlatformType.allCases.allSatisfy({ !$0.isEnabled }) {
+            if PlatformInstanceStore.shared.instances.allSatisfy({ !$0.isEnabled }) {
                 Text(I18nService.shared.translate("popover.atLeastOnePlatform"))
                     .font(.caption)
                     .foregroundColor(.secondary)

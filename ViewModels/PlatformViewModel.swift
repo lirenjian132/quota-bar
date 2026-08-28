@@ -5,26 +5,28 @@ import Combine
 @MainActor
 protocol PlatformViewModelDelegate: AnyObject {
     func platformViewModel(_ viewModel: PlatformViewModel, didUpdateData data: PlatformUsageData?)
-    func platformViewModel(_ viewModel: PlatformViewModel, didSwitchPlatform platform: PlatformType)
-    // 全量数据更新 (所有平台). 默认空实现, 向后兼容.
-    func platformViewModel(_ viewModel: PlatformViewModel, didUpdateAllData allData: [PlatformType: PlatformUsageData])
+    func platformViewModel(_ viewModel: PlatformViewModel, didSwitchInstance instance: PlatformInstance)
+    // 全量数据更新 (所有实例). 默认空实现, 向后兼容.
+    func platformViewModel(_ viewModel: PlatformViewModel, didUpdateAllData allData: [String: PlatformUsageData])
 }
 
 extension PlatformViewModelDelegate {
-    func platformViewModel(_ viewModel: PlatformViewModel, didUpdateAllData allData: [PlatformType: PlatformUsageData]) {}
+    func platformViewModel(_ viewModel: PlatformViewModel, didUpdateAllData allData: [String: PlatformUsageData]) {}
 }
 
 @MainActor
 final class PlatformViewModel: ObservableObject {
-    @Published var platformData: [PlatformType: PlatformUsageData] = [:]
-    @Published var platformErrors: [PlatformType: PlatformError] = [:]
-    @Published var isLoading: [PlatformType: Bool] = [:]
-    @Published var activePlatform: PlatformType
+    @Published var platformData: [String: PlatformUsageData] = [:]
+    @Published var platformErrors: [String: PlatformError] = [:]
+    @Published var isLoading: [String: Bool] = [:]
+    @Published var activeInstance: PlatformInstance
     @Published var showingConfig: Bool = false
-    @Published var configPlatform: PlatformType?
+    @Published var configInstance: PlatformInstance?
     @Published var apiKeyInput: String = ""
     @Published var regionInput: String = "domestic"
     @Published var showingAPIKey: Bool = false
+    /// 刚点「添加账号」尚未保存 key 的实例 id; 取消配置时自动回收.
+    @Published private(set) var pendingNewInstanceID: String?
 
     weak var delegate: PlatformViewModelDelegate?
 
@@ -32,16 +34,26 @@ final class PlatformViewModel: ObservableObject {
     private var fetchTask: Task<Void, Never>?
     private let platformManager: PlatformManager
     private let configService: ConfigService
+    private let instanceStore: PlatformInstanceStore
 
-    init(platformManager: PlatformManager = .shared, configService: ConfigService = .shared) {
+    init(platformManager: PlatformManager = .shared, configService: ConfigService = .shared, instanceStore: PlatformInstanceStore = .shared) {
         self.platformManager = platformManager
         self.configService = configService
-        self.activePlatform = configService.activePlatform
+        self.instanceStore = instanceStore
+        self.activeInstance = configService.activeInstance
 
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(onPlatformEnabledChanged),
             name: .platformEnabledChanged,
+            object: nil
+        )
+
+        // 实例被删除时清掉它的数据/错误/加载状态, 避免残留.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onPlatformInstanceRemoved(_:)),
+            name: .platformInstanceRemoved,
             object: nil
         )
     }
@@ -50,25 +62,38 @@ final class PlatformViewModel: ObservableObject {
         NotificationCenter.default.removeObserver(self)
     }
 
-    // MARK: - Platform Enabled Observer
+    // MARK: - Observers
 
-    @objc private func onPlatformEnabledChanged() {
-        // When platform enabled state changes, ensure active platform is still valid
-        let enabledPlatforms = configService.allEnabledPlatforms
-
-        if !activePlatform.isEnabled {
-            // Current active platform was disabled, switch to first enabled platform
-            if let firstEnabled = enabledPlatforms.first {
-                switchActivePlatform(firstEnabled)
-            }
-        } else if !enabledPlatforms.contains(activePlatform) {
-            // Active platform not in enabled list, switch to first enabled
-            if let firstEnabled = enabledPlatforms.first {
-                switchActivePlatform(firstEnabled)
+    @objc private func onPlatformInstanceRemoved(_ note: Notification) {
+        guard let id = note.object as? String else { return }
+        platformData.removeValue(forKey: id)
+        platformErrors.removeValue(forKey: id)
+        isLoading.removeValue(forKey: id)
+        // 若删的是当前激活实例, 切到第一个可用实例 (enabled observer 会再校验一次)
+        if activeInstance.id == id {
+            if let first = configService.allEnabledInstances.first {
+                switchActiveInstance(first)
             }
         }
-        // If newly enabled platform is not the active one, switch to it
-        // This handles the case where user enables a new platform via checkbox
+    }
+
+    @objc private func onPlatformEnabledChanged() {
+        // When instance enabled state changes, ensure active instance is still valid
+        let enabledInstances = configService.allEnabledInstances
+
+        if !activeInstance.isEnabled {
+            // Current active instance was disabled, switch to first enabled instance
+            if let firstEnabled = enabledInstances.first {
+                switchActiveInstance(firstEnabled)
+            }
+        } else if !enabledInstances.contains(where: { $0.id == activeInstance.id }) {
+            // Active instance not in enabled list, switch to first enabled
+            if let firstEnabled = enabledInstances.first {
+                switchActiveInstance(firstEnabled)
+            }
+        }
+        // If newly enabled instance is not the active one, switch to it
+        // This handles the case where user enables a new instance via checkbox
         objectWillChange.send()
     }
 
@@ -101,9 +126,9 @@ final class PlatformViewModel: ObservableObject {
     func fetchAllUsage() async {
         fetchTask?.cancel()
         fetchTask = Task {
-            // 先标记所有已配置平台为加载中
-            for platform in platformManager.configuredPlatforms() {
-                isLoading[platform] = true
+            // 先标记所有已配置实例为加载中
+            for instance in platformManager.configuredInstances() {
+                isLoading[instance.id] = true
             }
 
             let results = await platformManager.fetchAllUsage()
@@ -113,66 +138,95 @@ final class PlatformViewModel: ObservableObject {
             //  但结果不再写回, 防止定时刷新和手动刷新撞车时旧数据盖新数据)
             if Task.isCancelled { return }
 
-            for (platform, result) in results {
+            for (instanceID, result) in results {
                 switch result {
                 case .success(let data):
-                    platformData[platform] = data
-                    platformErrors[platform] = nil
+                    platformData[instanceID] = data
+                    platformErrors[instanceID] = nil
                 case .failure(let error):
+                    let errorPlatform = instanceStore.instance(id: instanceID)?.platformType ?? activeInstance.platformType
                     if let platformError = error as? PlatformError {
-                        platformErrors[platform] = platformError
+                        platformErrors[instanceID] = platformError
                     } else {
-                        platformErrors[platform] = .networkError(platform, error.localizedDescription)
+                        platformErrors[instanceID] = .networkError(errorPlatform, error.localizedDescription)
                     }
                 }
-                isLoading[platform] = false
+                isLoading[instanceID] = false
             }
 
-            // Notify delegate for active platform + 全量数据 (钉选多平台状态栏需要)
-            delegate?.platformViewModel(self, didUpdateData: platformData[activePlatform])
+            // Notify delegate for active instance + 全量数据 (钉选多实例状态栏需要)
+            delegate?.platformViewModel(self, didUpdateData: platformData[activeInstance.id])
             delegate?.platformViewModel(self, didUpdateAllData: platformData)
         }
     }
 
-    func fetchUsage(for platform: PlatformType) {
-        isLoading[platform] = true
-        platformErrors[platform] = nil
+    func fetchUsage(for instance: PlatformInstance) {
+        isLoading[instance.id] = true
+        platformErrors[instance.id] = nil
 
         Task {
             do {
-                let data = try await platformManager.fetchUsage(for: platform)
-                platformData[platform] = data
-                platformErrors[platform] = nil
+                let data = try await platformManager.fetchUsage(for: instance)
+                platformData[instance.id] = data
+                platformErrors[instance.id] = nil
 
-                if platform == activePlatform {
+                if instance.id == activeInstance.id {
                     delegate?.platformViewModel(self, didUpdateData: data)
                 }
                 delegate?.platformViewModel(self, didUpdateAllData: platformData)
             } catch {
                 if let platformError = error as? PlatformError {
-                    platformErrors[platform] = platformError
+                    platformErrors[instance.id] = platformError
                 } else {
-                    platformErrors[platform] = .networkError(platform, error.localizedDescription)
+                    platformErrors[instance.id] = .networkError(instance.platformType, error.localizedDescription)
                 }
             }
-            isLoading[platform] = false
+            isLoading[instance.id] = false
         }
     }
 
-    // MARK: - Platform Switching
+    // MARK: - Instance Switching
 
-    func switchActivePlatform(_ platform: PlatformType) {
-        activePlatform = platform
-        configService.activePlatform = platform
-        delegate?.platformViewModel(self, didSwitchPlatform: platform)
-        delegate?.platformViewModel(self, didUpdateData: platformData[platform])
+    func switchActiveInstance(_ instance: PlatformInstance) {
+        activeInstance = instance
+        configService.activeInstance = instance
+        delegate?.platformViewModel(self, didSwitchInstance: instance)
+        delegate?.platformViewModel(self, didUpdateData: platformData[instance.id])
+    }
+
+    // MARK: - Instance Management
+
+    /// 添加新账号实例: 创建即启用, 切为激活并打开配置面板.
+    /// 记录 pendingNewInstanceID — 用户取消配置且从未填过 key 时自动回收实例, 不留幽灵账号.
+    @discardableResult
+    func addInstance(of type: PlatformType) -> PlatformInstance {
+        var instance = PlatformInstanceStore.shared.addInstance(of: type)
+        instance.isEnabled = true
+        pendingNewInstanceID = instance.id
+        switchActiveInstance(instance)
+        configureAPIKey(for: instance)
+        // 菜单/钉选栏/启用列表刷新
+        NotificationCenter.default.post(name: .platformEnabledChanged, object: nil)
+        return instance
+    }
+
+    /// 重命名账号 (菜单/弹窗里的显示名). 调用方负责弹输入框.
+    func renameInstance(_ instance: PlatformInstance, to name: String) {
+        PlatformInstanceStore.shared.renameInstance(id: instance.id, to: name)
+        objectWillChange.send()
+    }
+
+    /// 删除账号实例 (连带 Keychain key 与各处缓存, 由 store 发通知联动清理).
+    func removeInstance(_ instance: PlatformInstance) {
+        if pendingNewInstanceID == instance.id { pendingNewInstanceID = nil }
+        PlatformInstanceStore.shared.removeInstance(id: instance.id)
     }
 
     // MARK: - Config
 
-    func configureAPIKey(for platform: PlatformType) {
-        configPlatform = platform
-        let store = configService.store(for: platform)
+    func configureAPIKey(for instance: PlatformInstance) {
+        configInstance = instance
+        let store = configService.store(for: instance)
         apiKeyInput = store.isConfigured ? (store.apiKey ?? "") : ""
         regionInput = store.region
         showingAPIKey = false
@@ -180,8 +234,8 @@ final class PlatformViewModel: ObservableObject {
     }
 
     func saveAPIKey() {
-        guard let platform = configPlatform else { return }
-        let store = configService.store(for: platform)
+        guard let instance = configInstance else { return }
+        let store = configService.store(for: instance)
 
         let trimmedKey = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else { return }
@@ -189,16 +243,24 @@ final class PlatformViewModel: ObservableObject {
         store.setRegion(regionInput)
 
         showingConfig = false
-        configPlatform = nil
+        configInstance = nil
+        pendingNewInstanceID = nil
         apiKeyInput = ""
         regionInput = "domestic"
 
-        fetchUsage(for: platform)
+        fetchUsage(for: instance)
     }
 
     func cancelConfig() {
         showingConfig = false
-        configPlatform = nil
+        // 新建实例一路取消且从未填 key → 回收, 避免菜单里堆积没配置的幽灵账号
+        if let pendingID = pendingNewInstanceID,
+           let pending = configInstance, pending.id == pendingID,
+           !configService.store(for: pending).isConfigured {
+            PlatformInstanceStore.shared.removeInstance(id: pendingID)
+        }
+        pendingNewInstanceID = nil
+        configInstance = nil
         apiKeyInput = ""
         regionInput = "domestic"
         showingAPIKey = false
@@ -207,31 +269,31 @@ final class PlatformViewModel: ObservableObject {
     // MARK: - Computed
 
     var activePlatformData: PlatformUsageData? {
-        platformData[activePlatform]
+        platformData[activeInstance.id]
     }
 
     var activePlatformError: PlatformError? {
-        platformErrors[activePlatform]
+        platformErrors[activeInstance.id]
     }
 
     var isActivePlatformLoading: Bool {
-        isLoading[activePlatform] ?? false
+        isLoading[activeInstance.id] ?? false
     }
 
-    var allConfiguredPlatforms: [PlatformType] {
-        platformManager.configuredPlatforms()
+    var allConfiguredInstances: [PlatformInstance] {
+        platformManager.configuredInstances()
     }
 
-    var allPlatforms: [PlatformType] {
-        ConfigService.shared.allEnabledPlatforms
+    var allInstances: [PlatformInstance] {
+        configService.allEnabledInstances
     }
 
-    func isConfigured(_ platform: PlatformType) -> Bool {
-        configService.store(for: platform).isConfigured
+    func isConfigured(_ instance: PlatformInstance) -> Bool {
+        configService.store(for: instance).isConfigured
     }
 
-    func platformDisplayName(_ platform: PlatformType) -> String {
-        platform.displayName
+    func instanceDisplayName(_ instance: PlatformInstance) -> String {
+        instance.displayTitle
     }
 
     // MARK: - Cleanup

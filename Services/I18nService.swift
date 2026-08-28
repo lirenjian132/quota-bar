@@ -12,7 +12,7 @@ final class I18nService {
     private init() {}
 
     func loadTranslations() {
-        currentLocale = UserDefaults.standard.string(forKey: userDefaultsLocaleKey) ?? defaultLocale
+        currentLocale = AppEnvironment.defaults.string(forKey: userDefaultsLocaleKey) ?? defaultLocale
 
         if let enURL = Bundle.main.url(forResource: "en", withExtension: "json"),
            let enData = try? Data(contentsOf: enURL),
@@ -33,6 +33,6 @@ final class I18nService {
 
     func setLocale(_ locale: String) {
         currentLocale = locale
-        UserDefaults.standard.set(locale, forKey: userDefaultsLocaleKey)
+        AppEnvironment.defaults.set(locale, forKey: userDefaultsLocaleKey)
     }
 }

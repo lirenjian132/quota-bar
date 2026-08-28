@@ -42,6 +42,8 @@ extension PlatformError: LocalizedError {
 
 struct PlatformUsageData: Equatable {
     let platform: PlatformType
+    /// 产生这份数据的账号实例 id (见 PlatformInstanceStore). 渲染/定位用.
+    let instanceID: String
     let displayName: String
     let metrics: [UsageMetric]
     let lastUpdated: Date
@@ -58,6 +60,10 @@ struct UsageMetric: Equatable {
 
 struct PlatformConfigData {
     let platformType: PlatformType
+    /// 账号实例 id (见 PlatformInstanceStore), 数据归属与展示用. 测试可省略.
+    var instanceID: String = ""
+    /// 展示名: 账号自定义名或平台默认名 (PlatformInstance.displayTitle). 测试可省略.
+    var displayName: String = ""
     let apiBaseURL: String
     let authHeader: String
     let authPrefix: String

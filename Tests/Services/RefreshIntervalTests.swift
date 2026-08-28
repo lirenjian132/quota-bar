@@ -5,7 +5,7 @@ final class RefreshIntervalTests: XCTestCase {
 
     override func tearDown() {
         super.tearDown()
-        UserDefaults.standard.removeObject(forKey: "quotabar.refreshInterval")
+        AppEnvironment.testDefaults.removeObject(forKey: "quotabar.refreshInterval")
     }
 
     func testAllCasesCount() {
@@ -49,7 +49,7 @@ final class RefreshIntervalTests: XCTestCase {
 
         // Simulate re-creation by clearing cached instance
         // Note: ConfigService is a singleton, so we verify via UserDefaults
-        let raw = UserDefaults.standard.string(forKey: "quotabar.refreshInterval")
+        let raw = AppEnvironment.testDefaults.string(forKey: "quotabar.refreshInterval")
         XCTAssertEqual(raw, RefreshInterval.threeMinutes.rawValue)
     }
 

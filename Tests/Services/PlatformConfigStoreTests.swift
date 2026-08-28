@@ -4,8 +4,8 @@ import XCTest
 final class PlatformConfigStoreTests: XCTestCase {
 
     private var keychain: InMemoryKeychainStore!
-    private let glmKey = "quotabar.platform.glm_cn"
-    private let minimaxKey = "quotabar.platform.minimax_cn"
+    private let glmKey = "quotabar.instance.glm_cn"
+    private let minimaxKey = "quotabar.instance.minimax_cn"
 
     // 隔离的 UserDefaults suite, 避免测试 fixture 污染真实用户配置 (.standard).
     // 之前用 .standard 导致 setAPIKey("sk-minimax") 覆盖了用户的真实 MiniMax token.
@@ -24,7 +24,12 @@ final class PlatformConfigStoreTests: XCTestCase {
     }
 
     private func makeStore(_ type: PlatformType) -> PlatformConfigStore {
-        PlatformConfigStore(platformType: type, keychain: keychain, userDefaults: testDefaults)
+        makeStore(id: type.rawValue, type: type)
+    }
+
+    private func makeStore(id: String, type: PlatformType) -> PlatformConfigStore {
+        PlatformConfigStore(instance: PlatformInstance(id: id, platformType: type, displayName: ""),
+                            keychain: keychain, userDefaults: testDefaults)
     }
 
     func testNewStoreIsNotConfigured() {

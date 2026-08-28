@@ -52,22 +52,22 @@ struct PopoverContentView: View {
     private var platformNavigator: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(viewModel.allPlatforms, id: \.self) { platform in
-                    platformTab(platform)
+                ForEach(viewModel.allInstances) { instance in
+                    platformTab(instance)
                 }
             }
         }
     }
 
-    private func platformTab(_ platform: PlatformType) -> some View {
-        let isActive = platform == viewModel.activePlatform
-        let isConfigured = viewModel.isConfigured(platform)
+    private func platformTab(_ instance: PlatformInstance) -> some View {
+        let isActive = instance.id == viewModel.activeInstance.id
+        let isConfigured = viewModel.isConfigured(instance)
 
         return Button(action: {
-            viewModel.switchActivePlatform(platform)
+            viewModel.switchActiveInstance(instance)
         }) {
             HStack(spacing: 4) {
-                Text(viewModel.platformDisplayName(platform))
+                Text(viewModel.instanceDisplayName(instance))
                     .font(.caption.bold())
                 if !isConfigured {
                     Image(systemName: "gear")
@@ -87,21 +87,21 @@ struct PopoverContentView: View {
 
     @ViewBuilder
     private var platformContent: some View {
-        let platform = viewModel.activePlatform
+        let instance = viewModel.activeInstance
 
-        if !viewModel.isConfigured(platform) {
-            unconfiguredSection(platform)
-        } else if let data = viewModel.platformData[platform] {
+        if !viewModel.isConfigured(instance) {
+            unconfiguredSection(instance)
+        } else if let data = viewModel.platformData[instance.id] {
             // 有数据就显示数据 (和状态栏一致). metrics 空 → 无数据; 否则正常显示,
             // 若同时有刷新错误则附带提示, 让用户知道数值可能不是最新的.
             if data.metrics.isEmpty {
                 noDataSection
             } else {
-                metricsSection(data, refreshError: viewModel.platformErrors[platform])
+                metricsSection(data, refreshError: viewModel.platformErrors[instance.id])
             }
-        } else if let error = viewModel.platformErrors[platform] {
+        } else if let error = viewModel.platformErrors[instance.id] {
             errorSection(error)
-        } else if viewModel.isLoading[platform] == true {
+        } else if viewModel.isLoading[instance.id] == true {
             loadingSection
         } else {
             emptySection
@@ -214,7 +214,7 @@ struct PopoverContentView: View {
 
     private var configSection: some View {
         VStack(spacing: 12) {
-            Text(String(format: I18nService.shared.translate("popover.configurePlatform"), viewModel.configPlatform?.displayName ?? ""))
+            Text(String(format: I18nService.shared.translate("popover.configurePlatform"), viewModel.configInstance?.displayTitle ?? ""))
                 .font(.subheadline.bold())
 
             HStack(spacing: 8) {
@@ -248,19 +248,19 @@ struct PopoverContentView: View {
 
     // 保存按钮是否可用: 填了 API Key 即可
     private var configSaveButtonEnabled: Bool {
-        guard viewModel.configPlatform != nil else { return false }
+        guard viewModel.configInstance != nil else { return false }
         return !viewModel.apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
 
     // MARK: - Unconfigured Section
 
-    private func unconfiguredSection(_ platform: PlatformType) -> some View {
+    private func unconfiguredSection(_ instance: PlatformInstance) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(String(format: I18nService.shared.translate("popover.platformNotConfigured"), platform.displayName), systemImage: "gear")
+            Label(String(format: I18nService.shared.translate("popover.platformNotConfigured"), instance.displayTitle), systemImage: "gear")
                 .font(.subheadline.bold())
 
-            Button(action: { viewModel.configureAPIKey(for: platform) }) {
+            Button(action: { viewModel.configureAPIKey(for: instance) }) {
                 Text(I18nService.shared.translate("popover.configureNow"))
             }
             .buttonStyle(.borderedProminent)
@@ -340,7 +340,7 @@ struct PopoverContentView: View {
                 }
                 .buttonStyle(.bordered)
             } else {
-                if viewModel.isConfigured(viewModel.activePlatform) {
+                if viewModel.isConfigured(viewModel.activeInstance) {
                     Button(action: {
                         Task { await viewModel.fetchAllUsage() }
                     }) {
@@ -349,7 +349,7 @@ struct PopoverContentView: View {
                     .buttonStyle(.bordered)
                 }
 
-                Button(action: { viewModel.configureAPIKey(for: viewModel.activePlatform) }) {
+                Button(action: { viewModel.configureAPIKey(for: viewModel.activeInstance) }) {
                     Image(systemName: "gear")
                 }
                 .buttonStyle(.bordered)

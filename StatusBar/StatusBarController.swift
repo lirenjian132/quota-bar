@@ -12,9 +12,9 @@ class StatusBarController {
     private var popover: NSPopover?
     private var clickMonitor: Any?
 
-    // 钉选多平台: 每个钉选平台一个独立的 NSStatusItem, 常驻状态栏.
-    private var pinnedItems: [PlatformType: NSStatusItem] = [:]
-    private var pinnedViews: [PlatformType: RightClickStatusBarView] = [:]
+    // 钉选多实例: 每个钉选账号实例一个独立的 NSStatusItem, 常驻状态栏.
+    private var pinnedItems: [String: NSStatusItem] = [:]
+    private var pinnedViews: [String: RightClickStatusBarView] = [:]
 
     init(viewModel: PlatformViewModel) {
         self.viewModel = viewModel
@@ -23,7 +23,7 @@ class StatusBarController {
 
         let statusBarContentView = StatusBarView(
             platformData: viewModel.activePlatformData,
-            enabledMetrics: ConfigService.shared.enabledMetrics(for: .minimax_cn)
+            enabledMetrics: ConfigService.shared.enabledMetrics(for: viewModel.activeInstance)
         )
         statusBarView = RightClickStatusBarView(rootView: statusBarContentView)
 
@@ -69,6 +69,14 @@ class StatusBarController {
             self,
             selector: #selector(handleEnabledMetricsChanged(_:)),
             name: .enabledMetricsChanged,
+            object: nil
+        )
+
+        // 实例顺序变化 (左移/右移): 全拆钉选块按新顺序重建
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInstancesReordered),
+            name: .platformInstancesReordered,
             object: nil
         )
 
@@ -183,7 +191,10 @@ class StatusBarController {
         let platformMenu = NSMenu()
 
         // 每个平台一个子菜单, 含「启用」+「固定到状态栏」两个选项
-        for platform in PlatformType.allCases {
+        // 每个账号实例一个子菜单, 含「启用」+「固定到状态栏」两个选项.
+        // representedObject 用 instance.id (String), 避免 Swift enum 经 ObjC 桥接后解不回.
+        let allInstances = PlatformInstanceStore.shared.instances
+        for (index, instance) in allInstances.enumerated() {
             let platSubmenu = NSMenu()
 
             let enableItem = NSMenuItem(
@@ -192,8 +203,8 @@ class StatusBarController {
                 keyEquivalent: ""
             )
             enableItem.target = self
-            enableItem.representedObject = platform
-            enableItem.state = platform.isEnabled ? .on : .off
+            enableItem.representedObject = instance.id
+            enableItem.state = instance.isEnabled ? .on : .off
             platSubmenu.addItem(enableItem)
 
             let pinItem = NSMenuItem(
@@ -202,17 +213,71 @@ class StatusBarController {
                 keyEquivalent: ""
             )
             pinItem.target = self
-            pinItem.representedObject = platform
-            pinItem.state = platform.isPinned ? .on : .off
-            // 未启用的平台不能钉选
-            pinItem.isEnabled = platform.isEnabled
+            pinItem.representedObject = instance.id
+            pinItem.state = instance.isPinned ? .on : .off
+            // 未启用的实例不能钉选
+            pinItem.isEnabled = instance.isEnabled
             platSubmenu.addItem(pinItem)
 
-            let platItem = NSMenuItem(title: platform.displayName, action: nil, keyEquivalent: "")
+            // 排序: 左移/右移 (首个不可再左移, 末个不可再右移)
+            let moveLeftItem = NSMenuItem(
+                title: I18nService.shared.translate("menu.moveLeft"),
+                action: #selector(moveInstanceAction(_:)),
+                keyEquivalent: ""
+            )
+            moveLeftItem.target = self
+            moveLeftItem.representedObject = ["id": instance.id, "offset": -1]
+            moveLeftItem.isEnabled = index > 0
+            platSubmenu.addItem(moveLeftItem)
+
+            let moveRightItem = NSMenuItem(
+                title: I18nService.shared.translate("menu.moveRight"),
+                action: #selector(moveInstanceAction(_:)),
+                keyEquivalent: ""
+            )
+            moveRightItem.target = self
+            moveRightItem.representedObject = ["id": instance.id, "offset": 1]
+            moveRightItem.isEnabled = index < allInstances.count - 1
+            platSubmenu.addItem(moveRightItem)
+
+            platSubmenu.addItem(NSMenuItem.separator())
+
+            let renameItem = NSMenuItem(
+                title: I18nService.shared.translate("menu.renameAccount"),
+                action: #selector(renameAccountAction(_:)),
+                keyEquivalent: ""
+            )
+            renameItem.target = self
+            renameItem.representedObject = instance.id
+            platSubmenu.addItem(renameItem)
+
+            let deleteItem = NSMenuItem(
+                title: I18nService.shared.translate("menu.deleteAccount"),
+                action: #selector(deleteAccountAction(_:)),
+                keyEquivalent: ""
+            )
+            deleteItem.target = self
+            deleteItem.representedObject = instance.id
+            // 最后一个启用的实例不能删 (删完全 app 就没有可显示账号了)
+            deleteItem.isEnabled = !(instance.isEnabled && PlatformManager.shared.isLastEnabledInstance(instance))
+            platSubmenu.addItem(deleteItem)
+
+            let platItem = NSMenuItem(title: instance.displayTitle, action: nil, keyEquivalent: "")
             platItem.submenu = platSubmenu
             platformMenu.addItem(platItem)
         }
 
+        platformMenu.addItem(NSMenuItem.separator())
+        for type in PlatformType.allCases {
+            let addItem = NSMenuItem(
+                title: I18nService.shared.translate("menu.addAccount.\(type.rawValue)"),
+                action: #selector(addAccountAction(_:)),
+                keyEquivalent: ""
+            )
+            addItem.target = self
+            addItem.representedObject = type.rawValue
+            platformMenu.addItem(addItem)
+        }
         platformMenu.addItem(NSMenuItem.separator())
         let configureItem = NSMenuItem(title: I18nService.shared.translate("menu.configurePlatform"), action: #selector(showConfigMenu), keyEquivalent: "")
         configureItem.target = self
@@ -223,14 +288,13 @@ class StatusBarController {
 
         // Enabled Metrics submenu: 每个平台一个子菜单, 含该平台所有可显示指标的多选.
         // 已勾 2 个时第 3 个菜单项禁用, 不让超过上限.
-        // 注意: NSMenuItem.representedObject 桥接到 NSDictionary 时, Swift enum
-        // (如 PlatformType) 会被包成 NSObject wrapper, 取时 as? PlatformType 会失败.
-        // 解决: 只用 NSObject 友好的值 (String), 在 action 里用 rawValue 反查.
+        // 注意: representedObject 一律用 instance.id (String) — Swift enum 经 ObjC
+        // 桥接会包成 NSObject wrapper, 取时 as? 反解会失败.
         let enabledMetricsMenu = NSMenu()
         let availableLabels = ["five_hour", "weekly_limit", "mcp_monthly"]
-        for platform in PlatformType.allCases {
+        for instance in PlatformInstanceStore.shared.instances {
             let platSub = NSMenu()
-            let current = ConfigService.shared.enabledMetrics(for: platform)
+            let current = ConfigService.shared.enabledMetrics(for: instance)
             for label in availableLabels {
                 let item = NSMenuItem(
                     title: I18nService.shared.translate("menu.metric.\(label)"),
@@ -239,14 +303,14 @@ class StatusBarController {
                 )
                 item.target = self
                 // 用 String 字典, 避免 Swift enum bridge 问题
-                item.representedObject = ["platform": platform.rawValue, "label": label]
+                item.representedObject = ["instanceID": instance.id, "label": label]
                 let checked = current.contains(label)
                 let atLimit = current.count >= 2 && !checked
                 item.state = checked ? .on : .off
                 item.isEnabled = !atLimit
                 platSub.addItem(item)
             }
-            let platTitleItem = NSMenuItem(title: platform.displayName, action: nil, keyEquivalent: "")
+            let platTitleItem = NSMenuItem(title: instance.displayTitle, action: nil, keyEquivalent: "")
             platTitleItem.submenu = platSub
             enabledMetricsMenu.addItem(platTitleItem)
         }
@@ -339,36 +403,84 @@ class StatusBarController {
 
     // MARK: - Actions
 
-    @objc private func switchPlatform(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let platform = PlatformType(rawValue: rawValue) else { return }
-        viewModel.switchActivePlatform(platform)
-        updateStatusBarView()
-    }
-
     @objc private func togglePlatformEnabled(_ sender: NSMenuItem) {
-        guard var platform = sender.representedObject as? PlatformType else { return }
-        let newState = !platform.isEnabled
-        // 禁用平台前先取消钉选 (必须在 setPlatformEnabled 之前, 因为它同步发通知触发 rebuildPinnedItems)
-        if !newState && platform.isPinned {
-            platform.isPinned = false
+        guard let instanceID = sender.representedObject as? String,
+              var instance = PlatformInstanceStore.shared.instance(id: instanceID) else { return }
+        let newState = !instance.isEnabled
+        // 禁用实例前先取消钉选 (必须在 setPlatformEnabled 之前, 因为它同步发通知触发 rebuildPinnedItems)
+        if !newState && instance.isPinned {
+            instance.isPinned = false
         }
-        PlatformManager.shared.setPlatformEnabled(newState, for: platform)
+        PlatformManager.shared.setPlatformEnabled(newState, for: instance)
         sender.state = newState ? .on : .off
     }
 
     @objc private func togglePlatformPinned(_ sender: NSMenuItem) {
-        guard var platform = sender.representedObject as? PlatformType else { return }
-        let newState = !platform.isPinned
-        platform.isPinned = newState
+        guard let instanceID = sender.representedObject as? String,
+              var instance = PlatformInstanceStore.shared.instance(id: instanceID) else { return }
+        let newState = !instance.isPinned
+        instance.isPinned = newState
         sender.state = newState ? .on : .off
         // 发通知触发 rebuildPinnedItems
         NotificationCenter.default.post(name: .platformEnabledChanged, object: nil)
     }
 
     @objc private func showConfigMenu() {
-        viewModel.configureAPIKey(for: viewModel.activePlatform)
+        viewModel.configureAPIKey(for: viewModel.activeInstance)
         statusItemClicked()
+    }
+
+    // 添加账号: 创建实例并直接弹出配置面板, 取消且未填 key 会自动回收
+    @objc private func addAccountAction(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let type = PlatformType(rawValue: raw) else { return }
+        viewModel.addInstance(of: type)
+        statusItemClicked()
+    }
+
+    @objc private func renameAccountAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let instance = PlatformInstanceStore.shared.instance(id: id) else { return }
+
+        let alert = NSAlert()
+        alert.messageText = I18nService.shared.translate("menu.renameAccount.title")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = instance.displayName
+        alert.accessoryView = field
+        alert.addButton(withTitle: I18nService.shared.translate("menu.about.ok"))
+        alert.addButton(withTitle: I18nService.shared.translate("common.cancel"))
+        alert.window.initialFirstResponder = field
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            viewModel.renameInstance(instance, to: field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    @objc private func deleteAccountAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let instance = PlatformInstanceStore.shared.instance(id: id) else { return }
+
+        let alert = NSAlert()
+        alert.messageText = String(
+            format: I18nService.shared.translate("menu.deleteAccount.confirm"),
+            instance.displayTitle
+        )
+        alert.informativeText = I18nService.shared.translate("menu.deleteAccount.informative")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: I18nService.shared.translate("menu.deleteAccount.confirmOk"))
+        alert.addButton(withTitle: I18nService.shared.translate("common.cancel"))
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            viewModel.removeInstance(instance)
+        }
+    }
+
+    // 左移/右移账号: 通知触发钉选块按新顺序全量重建
+    @objc private func moveInstanceAction(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: Any],
+              let id = payload["id"] as? String,
+              let offset = payload["offset"] as? Int else { return }
+        PlatformInstanceStore.shared.moveInstance(id: id, offset: offset)
     }
 
     @objc private func setDisplayModeUsed() {
@@ -383,17 +495,17 @@ class StatusBarController {
 
     @objc private func toggleEnabledMetric(_ sender: NSMenuItem) {
         guard let payload = sender.representedObject as? [String: Any],
-              let platformRaw = payload["platform"] as? String,
-              let platform = PlatformType(rawValue: platformRaw),
+              let instanceID = payload["instanceID"] as? String,
+              let instance = PlatformInstanceStore.shared.instance(id: instanceID),
               let label = payload["label"] as? String else { return }
 
-        var current = ConfigService.shared.enabledMetrics(for: platform)
+        var current = ConfigService.shared.enabledMetrics(for: instance)
         if current.contains(label) {
             current.removeAll { $0 == label }
         } else {
             current.append(label)
         }
-        ConfigService.shared.setEnabledMetrics(current, for: platform)
+        ConfigService.shared.setEnabledMetrics(current, for: instance)
         // 通知已由 setter 发, 无需再手动 post.
         // 同步更新菜单项状态 (因为菜单已弹出, 不会重新构造).
         let atLimit = current.count >= 2
@@ -512,7 +624,7 @@ class StatusBarController {
     // MARK: - Update
 
     private func updateStatusBarView() {
-        let active = viewModel.activePlatform
+        let active = viewModel.activeInstance
         statusBarView.update(rootView: StatusBarView(
             platformData: viewModel.activePlatformData,
             displayMode: ConfigService.shared.displayMode,
@@ -528,26 +640,26 @@ class StatusBarController {
 
     // 全量更新: 同时刷新主 item 和所有钉选 item.
     // allData 是所有平台的数据字典.
-    func updateAll(data allData: [PlatformType: PlatformUsageData]) {
-        let pinned = PlatformType.allPinned
+    func updateAll(data allData: [String: PlatformUsageData]) {
+        let pinned = PlatformInstance.allPinned
 
-        // 有钉选平台: 主 item 隐藏, 只用 pinned items 显示
+        // 有钉选实例: 主 item 隐藏, 只用 pinned items 显示
         if !pinned.isEmpty {
             statusItem.length = 0
             statusItem.isVisible = false
 
-            for platform in pinned {
-                updatePinnedItem(platform, data: allData[platform])
+            for instance in pinned {
+                updatePinnedItem(instance, data: allData[instance.id])
             }
             return
         }
 
-        // 没有钉选平台: 主 item 显示 activePlatform (原有行为)
+        // 没有钉选实例: 主 item 显示 activeInstance (原有行为)
         statusItem.isVisible = true
         statusBarView.update(rootView: StatusBarView(
             platformData: viewModel.activePlatformData,
             displayMode: ConfigService.shared.displayMode,
-            enabledMetrics: ConfigService.shared.enabledMetrics(for: viewModel.activePlatform)
+            enabledMetrics: ConfigService.shared.enabledMetrics(for: viewModel.activeInstance)
         ))
         statusBarView.layoutSubtreeIfNeeded()
         statusItem.length = max(
@@ -557,17 +669,17 @@ class StatusBarController {
     }
 
     // 更新单个钉选 item 的内容.
-    private func updatePinnedItem(_ platform: PlatformType, data: PlatformUsageData?) {
-        guard let view = pinnedViews[platform] else { return }
+    private func updatePinnedItem(_ instance: PlatformInstance, data: PlatformUsageData?) {
+        guard let view = pinnedViews[instance.id] else { return }
 
         view.update(rootView: StatusBarView(
             platformData: data,
             displayMode: ConfigService.shared.displayMode,
-            enabledMetrics: ConfigService.shared.enabledMetrics(for: platform)
+            enabledMetrics: ConfigService.shared.enabledMetrics(for: instance)
         ))
         view.layoutSubtreeIfNeeded()
 
-        if let item = pinnedItems[platform] {
+        if let item = pinnedItems[instance.id] {
             item.length = max(
                 StatusBarController.minimumItemWidth,
                 ceil(view.fittingSize.width)
@@ -578,16 +690,26 @@ class StatusBarController {
     // MARK: - Pinned Items Management
 
     // 平台启用/钉选状态变化时, 重建钉选 item 列表.
+    // NSStatusItem 的左右位置由创建顺序决定, 增量 rebuild 挪不动已存在的 item,
+    // 顺序变化必须全拆重建.
+    @objc private func handleInstancesReordered() {
+        pinnedItems.values.forEach { NSStatusBar.system.removeStatusItem($0) }
+        pinnedItems.removeAll()
+        pinnedViews.removeAll()
+        rebuildPinnedItems()
+        updateAll(data: viewModel.platformData)
+    }
+
     @objc private func handlePlatformChanged() {
         rebuildPinnedItems()
         updateAll(data: viewModel.platformData)
-        // 主动拉取刚钉选但还没有数据的平台, 避免新 pin 的块一直显示 "--"
-        for platform in PlatformType.allPinned where viewModel.platformData[platform] == nil {
-            viewModel.fetchUsage(for: platform)
+        // 主动拉取刚钉选但还没有数据的实例, 避免新 pin 的块一直显示 "--"
+        for instance in PlatformInstance.allPinned where viewModel.platformData[instance.id] == nil {
+            viewModel.fetchUsage(for: instance)
         }
     }
 
-    // 启用 metric 变化: 通知的 object 是 PlatformType (来自 setter), 用于决定重绘范围.
+    // 启用 metric 变化: 通知的 object 是 instance id (String, 来自 setter).
     // 简化: 直接重绘全部 status item, 避免按平台分支.
     @objc private func handleEnabledMetricsChanged(_ note: Notification) {
         updateAll(data: viewModel.platformData)
@@ -595,30 +717,30 @@ class StatusBarController {
 
     // 根据当前 isPinned 状态, 增删 NSStatusItem.
     private func rebuildPinnedItems() {
-        let pinned = Set(PlatformType.allPinned)
+        let pinned = Set(PlatformInstance.allPinned.map(\.id))
         let existing = Set(pinnedItems.keys)
 
         // 移除不再钉选的
-        for platform in existing.subtracting(pinned) {
-            if let item = pinnedItems.removeValue(forKey: platform) {
+        for id in existing.subtracting(pinned) {
+            if let item = pinnedItems.removeValue(forKey: id) {
                 NSStatusBar.system.removeStatusItem(item)
             }
-            pinnedViews.removeValue(forKey: platform)
+            pinnedViews.removeValue(forKey: id)
         }
 
         // 新增刚钉选的
-        for platform in PlatformType.allPinned where !existing.contains(platform) {
-            createPinnedItem(for: platform)
+        for instance in PlatformInstance.allPinned where !existing.contains(instance.id) {
+            createPinnedItem(for: instance)
         }
     }
 
-    private func createPinnedItem(for platform: PlatformType) {
+    private func createPinnedItem(for instance: PlatformInstance) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         let view = RightClickStatusBarView(rootView: StatusBarView(
-            platformData: viewModel.platformData[platform],
+            platformData: viewModel.platformData[instance.id],
             displayMode: ConfigService.shared.displayMode,
-            enabledMetrics: ConfigService.shared.enabledMetrics(for: platform)
+            enabledMetrics: ConfigService.shared.enabledMetrics(for: instance)
         ))
 
         guard let button = item.button else { return }
@@ -647,7 +769,7 @@ class StatusBarController {
             ceil(view.fittingSize.width)
         )
 
-        pinnedItems[platform] = item
-        pinnedViews[platform] = view
+        pinnedItems[instance.id] = item
+        pinnedViews[instance.id] = view
     }
 }

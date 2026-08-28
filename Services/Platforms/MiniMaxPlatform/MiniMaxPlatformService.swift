@@ -73,7 +73,7 @@ final class MiniMaxPlatformAPIService: PlatformAPIService {
         }
         let modelData = modelRemains.first(where: { $0.modelName == "general" }) ?? modelRemains[0]
 
-        let usageData = parseUsageData(from: modelData, platform: config.platformType)
+        let usageData = parseUsageData(from: modelData, config: config)
         cache.write(usageData)
         return usageData
     }
@@ -90,7 +90,7 @@ final class MiniMaxPlatformAPIService: PlatformAPIService {
         return config.apiBaseURL
     }
 
-    private func parseUsageData(from model: ModelRemain, platform: PlatformType) -> PlatformUsageData {
+    private func parseUsageData(from model: ModelRemain, config: PlatformConfigData) -> PlatformUsageData {
         // 新接口: remaining_percent (0-100), 转换为已用百分比
         let dailyRemainingPct = model.currentIntervalRemainingPercent ?? 0
         let weeklyRemainingPct = model.currentWeeklyRemainingPercent ?? 0
@@ -148,8 +148,9 @@ final class MiniMaxPlatformAPIService: PlatformAPIService {
         }
 
         return PlatformUsageData(
-            platform: platform,
-            displayName: platform.displayName,
+            platform: config.platformType,
+            instanceID: config.instanceID,
+            displayName: config.displayName,
             metrics: metrics,
             lastUpdated: Date(),
             isHealthy: isHealthy

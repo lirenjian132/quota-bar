@@ -3,49 +3,56 @@ import XCTest
 
 @MainActor
 final class PlatformViewModelTests: XCTestCase {
-    func testDefaultActivePlatform() {
+    func testDefaultActiveInstance() {
         let viewModel = PlatformViewModel()
-        XCTAssertTrue(PlatformType.allCases.contains(viewModel.activePlatform))
+        let instance = viewModel.activeInstance
+        XCTAssertTrue(PlatformInstanceStore.shared.instances.contains(where: { $0.id == instance.id }))
     }
 
-    func testAllPlatformsReturnsEnabledPlatforms() {
+    func testAllInstancesReturnsEnabledInstances() {
         let viewModel = PlatformViewModel()
-        let enabledCount = PlatformType.allCases.filter { $0.isEnabled }.count
-        XCTAssertEqual(viewModel.allPlatforms.count, enabledCount)
+        let enabledCount = PlatformInstanceStore.shared.instances.filter { $0.isEnabled }.count
+        XCTAssertEqual(viewModel.allInstances.count, enabledCount)
     }
 
-    func testConfiguredPlatformsReturnsArray() {
+    func testConfiguredInstancesReturnsArray() {
         let viewModel = PlatformViewModel()
-        let platforms = viewModel.allConfiguredPlatforms
-        XCTAssertNotNil(platforms)
+        let instances = viewModel.allConfiguredInstances
+        XCTAssertNotNil(instances)
     }
 
     func testIsConfiguredReturnsBool() {
         let viewModel = PlatformViewModel()
-        for platform in PlatformType.allCases {
-            let _ = viewModel.isConfigured(platform)
+        for instance in PlatformInstanceStore.shared.instances {
+            let _ = viewModel.isConfigured(instance)
         }
     }
 
-    func testPlatformDisplayName() {
+    func testInstanceDisplayName() {
         let viewModel = PlatformViewModel()
-        XCTAssertEqual(viewModel.platformDisplayName(.minimax_cn), "MiniMax")
-        XCTAssertEqual(viewModel.platformDisplayName(.glm_cn), "GLM")
+        let minimax = PlatformInstance(id: "minimax_cn", platformType: .minimax_cn, displayName: "")
+        let glm = PlatformInstance(id: "glm_cn", platformType: .glm_cn, displayName: "")
+        XCTAssertEqual(viewModel.instanceDisplayName(minimax), "MiniMax")
+        XCTAssertEqual(viewModel.instanceDisplayName(glm), "GLM")
+        // 自定义名优先
+        let named = PlatformInstance(id: "x", platformType: .minimax_cn, displayName: "小号")
+        XCTAssertEqual(viewModel.instanceDisplayName(named), "小号")
     }
 
     func testConfigureAPIKey() {
         let viewModel = PlatformViewModel()
-        viewModel.configureAPIKey(for: .glm_cn)
+        let glm = PlatformInstance(id: "glm_cn", platformType: .glm_cn, displayName: "")
+        viewModel.configureAPIKey(for: glm)
         XCTAssertTrue(viewModel.showingConfig)
-        XCTAssertEqual(viewModel.configPlatform, .glm_cn)
+        XCTAssertEqual(viewModel.configInstance?.id, "glm_cn")
     }
 
     func testCancelConfig() {
         let viewModel = PlatformViewModel()
-        viewModel.configureAPIKey(for: .glm_cn)
+        viewModel.configureAPIKey(for: PlatformInstance(id: "glm_cn", platformType: .glm_cn, displayName: ""))
         viewModel.cancelConfig()
         XCTAssertFalse(viewModel.showingConfig)
-        XCTAssertNil(viewModel.configPlatform)
+        XCTAssertNil(viewModel.configInstance)
     }
 
     func testCleanupDoesNotCrash() {
@@ -54,9 +61,9 @@ final class PlatformViewModelTests: XCTestCase {
         viewModel.cleanup()
     }
 
-    func testSwitchActivePlatform() {
+    func testSwitchActiveInstance() {
         let viewModel = PlatformViewModel()
-        viewModel.switchActivePlatform(.glm_cn)
-        XCTAssertEqual(viewModel.activePlatform, .glm_cn)
+        viewModel.switchActiveInstance(PlatformInstance(id: "glm_cn", platformType: .glm_cn, displayName: ""))
+        XCTAssertEqual(viewModel.activeInstance.id, "glm_cn")
     }
 }

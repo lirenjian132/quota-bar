@@ -4,49 +4,60 @@ import XCTest
 final class ConfigServiceEnabledMetricsTests: XCTestCase {
     var service: ConfigService!
 
+    // 默认实例 (id 与平台 rawValue 相同), 与生产迁移结果一致.
+    static let minimaxInstance = PlatformInstance(id: "minimax_cn", platformType: .minimax_cn, displayName: "")
+    static let glmInstance = PlatformInstance(id: "glm_cn", platformType: .glm_cn, displayName: "")
+
+
+    // ConfigService 在测试进程路由到 AppEnvironment.testDefaults (隔离 suite),
+    // 不再触碰用户真实配置.
+    private let defaults = AppEnvironment.testDefaults
+
     override func setUp() {
         super.setUp()
-        // ConfigService 使用 UserDefaults.standard, 测试必须清掉真实 key 才能
-        // 测到默认值. 用独立 suite 隔离不了 (这是 dead code, 已删).
-        // 注意: 这会修改用户真实的 UserDefaults — 用户上次手动勾选的状态被覆盖.
-        // 测试结束后会在 tearDown 恢复 (不过即使不恢复, 用户重新勾一遍即可).
+        defaults.removeObject(forKey: "quotabar.instance.minimax_cn.enabledMetrics")
+        defaults.removeObject(forKey: "quotabar.instance.glm_cn.enabledMetrics")
         service = ConfigService.shared
-        UserDefaults.standard.removeObject(forKey: "quotabar.platform.minimax_cn.enabledMetrics")
-        UserDefaults.standard.removeObject(forKey: "quotabar.platform.glm_cn.enabledMetrics")
+    }
+
+    override func tearDown() {
+        defaults.removeObject(forKey: "quotabar.instance.minimax_cn.enabledMetrics")
+        defaults.removeObject(forKey: "quotabar.instance.glm_cn.enabledMetrics")
+        super.tearDown()
     }
 
     func testDefaultEnabledMetricsForMiniMax() {
-        XCTAssertEqual(service.enabledMetrics(for: .minimax_cn), ["five_hour"])
+        XCTAssertEqual(service.enabledMetrics(for: Self.minimaxInstance), ["five_hour"])
     }
 
     func testDefaultEnabledMetricsForGLM() {
-        XCTAssertEqual(service.enabledMetrics(for: .glm_cn), ["five_hour", "weekly_limit"])
+        XCTAssertEqual(service.enabledMetrics(for: Self.glmInstance), ["five_hour", "weekly_limit"])
     }
 
     func testEmptyUserDefaultsReturnsDefaults() {
-        UserDefaults.standard.removeObject(forKey: "quotabar.platform.minimax_cn.enabledMetrics")
-        XCTAssertEqual(service.enabledMetrics(for: .minimax_cn), ["five_hour"])
+        defaults.removeObject(forKey: "quotabar.instance.minimax_cn.enabledMetrics")
+        XCTAssertEqual(service.enabledMetrics(for: Self.minimaxInstance), ["five_hour"])
     }
 
     func testSetEnabledMetricsPersists() {
-        service.setEnabledMetrics(["mcp_monthly"], for: .minimax_cn)
-        XCTAssertEqual(service.enabledMetrics(for: .minimax_cn), ["mcp_monthly"])
+        service.setEnabledMetrics(["mcp_monthly"], for: Self.minimaxInstance)
+        XCTAssertEqual(service.enabledMetrics(for: Self.minimaxInstance), ["mcp_monthly"])
         // 模拟重启: 验证 UserDefaults 里写入了 JSON
-        let key = "quotabar.platform.minimax_cn.enabledMetrics"
-        let stored = UserDefaults.standard.string(forKey: key)
+        let key = "quotabar.instance.minimax_cn.enabledMetrics"
+        let stored = defaults.string(forKey: key)
         XCTAssertNotNil(stored)
         XCTAssertTrue(stored!.contains("mcp_monthly"))
     }
 
     func testSetEnabledMetricsRejectsEmpty() {
-        service.setEnabledMetrics(["five_hour"], for: .minimax_cn)  // baseline
-        service.setEnabledMetrics([], for: .minimax_cn)              // rejected
-        XCTAssertEqual(service.enabledMetrics(for: .minimax_cn), ["five_hour"])
+        service.setEnabledMetrics(["five_hour"], for: Self.minimaxInstance)  // baseline
+        service.setEnabledMetrics([], for: Self.minimaxInstance)              // rejected
+        XCTAssertEqual(service.enabledMetrics(for: Self.minimaxInstance), ["five_hour"])
     }
 
     func testSetEnabledMetricsRejectsTooMany() {
-        service.setEnabledMetrics(["five_hour"], for: .minimax_cn)
-        service.setEnabledMetrics(["five_hour", "weekly_limit", "mcp_monthly"], for: .minimax_cn)
-        XCTAssertEqual(service.enabledMetrics(for: .minimax_cn), ["five_hour"])
+        service.setEnabledMetrics(["five_hour"], for: Self.minimaxInstance)
+        service.setEnabledMetrics(["five_hour", "weekly_limit", "mcp_monthly"], for: Self.minimaxInstance)
+        XCTAssertEqual(service.enabledMetrics(for: Self.minimaxInstance), ["five_hour"])
     }
 }

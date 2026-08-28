@@ -26,11 +26,11 @@ extension AppDelegate: PlatformViewModelDelegate {
         statusBarController?.update(data: data)
     }
 
-    func platformViewModel(_ viewModel: PlatformViewModel, didUpdateAllData allData: [PlatformType: PlatformUsageData]) {
+    func platformViewModel(_ viewModel: PlatformViewModel, didUpdateAllData allData: [String: PlatformUsageData]) {
         statusBarController?.updateAll(data: allData)
     }
 
-    func platformViewModel(_ viewModel: PlatformViewModel, didSwitchPlatform platform: PlatformType) {
-        // Platform switched, status bar will update via didUpdateData
+    func platformViewModel(_ viewModel: PlatformViewModel, didSwitchInstance instance: PlatformInstance) {
+        // Instance switched, status bar will update via didUpdateData
     }
 }

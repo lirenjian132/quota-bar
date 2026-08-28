@@ -1,10 +1,10 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents (ZCode / Claude Code compatible) when working with code in this repository.
 
 # QuotaBar
 
-A macOS menu bar app displaying AI platform API usage/quota statistics. Built with SwiftUI + AppKit hybrid architecture. Supports multiple platforms (MiniMax, DeepSeek).
+A macOS menu bar app displaying AI platform API usage/quota statistics. Built with SwiftUI + AppKit hybrid architecture. Supports multiple platform accounts (MiniMax, GLM).
 
 ## Build Commands
 

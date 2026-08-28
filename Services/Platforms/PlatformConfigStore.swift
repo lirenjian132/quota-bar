@@ -2,6 +2,8 @@ import Foundation
 
 final class PlatformConfigStore {
     let platformType: PlatformType
+    /// 此配置归属的账号实例.
+    let instance: PlatformInstance
 
     private(set) var apiBaseURL: String
     private(set) var apiBaseURLInternational: String?
@@ -20,10 +22,11 @@ final class PlatformConfigStore {
         return !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    init(platformType: PlatformType, keychain: KeychainStoring = KeychainStore(), userDefaults: UserDefaults = .standard) {
-        self.platformType = platformType
+    init(instance: PlatformInstance, keychain: KeychainStoring = AppEnvironment.makeKeychain(), userDefaults: UserDefaults = AppEnvironment.defaults) {
+        self.platformType = instance.platformType
+        self.instance = instance
         self.keychain = keychain
-        self.defaultsKey = "quotabar.platform.\(platformType.rawValue)"
+        self.defaultsKey = "quotabar.instance.\(instance.id)"
         self.defaults = userDefaults
 
         self.apiBaseURL = ""
@@ -39,6 +42,8 @@ final class PlatformConfigStore {
     func toConfigData() -> PlatformConfigData {
         PlatformConfigData(
             platformType: platformType,
+            instanceID: instance.id,
+            displayName: instance.displayTitle,
             apiBaseURL: apiBaseURL,
             authHeader: authHeader,
             authPrefix: authPrefix,
@@ -55,7 +60,7 @@ final class PlatformConfigStore {
             return
         }
         do {
-            try keychain.set(trimmed, account: platformType.rawValue)
+            try keychain.set(trimmed, account: instance.id)
             apiKey = trimmed
             // Persist non-secret fields with empty api_key
             save()
@@ -67,7 +72,7 @@ final class PlatformConfigStore {
 
     func resetAPIKey() {
         do {
-            try keychain.delete(account: platformType.rawValue)
+            try keychain.delete(account: instance.id)
             apiKey = nil
             save()
             clearPlaintextAPIKeyInDefaults()
@@ -111,7 +116,7 @@ final class PlatformConfigStore {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let plaintextOrNil = (plaintext?.isEmpty == false) ? plaintext : nil
 
-        if let keychainKey = try? keychain.get(account: platformType.rawValue),
+        if let keychainKey = try? keychain.get(account: instance.id),
            !keychainKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             apiKey = keychainKey
             if plaintextOrNil != nil {
@@ -122,7 +127,7 @@ final class PlatformConfigStore {
 
         if let plaintextOrNil {
             do {
-                try keychain.set(plaintextOrNil, account: platformType.rawValue)
+                try keychain.set(plaintextOrNil, account: instance.id)
                 apiKey = plaintextOrNil
                 clearPlaintextAPIKeyInDefaults()
             } catch {
@@ -136,7 +141,7 @@ final class PlatformConfigStore {
     }
 
     private func loadAPIKeyFromKeychainOnly() {
-        if let keychainKey = try? keychain.get(account: platformType.rawValue),
+        if let keychainKey = try? keychain.get(account: instance.id),
            !keychainKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             apiKey = keychainKey
         }
@@ -199,26 +204,3 @@ final class PlatformConfigStore {
     }
 }
 
-extension PlatformType {
-    var isEnabled: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: "quotabar.platform.\(rawValue).enabled") == nil {
-                return self == .minimax_cn  // Only MiniMax CN enabled by default
-            }
-            return UserDefaults.standard.bool(forKey: "quotabar.platform.\(rawValue).enabled")
-        }
-        set { UserDefaults.standard.set(newValue, forKey: "quotabar.platform.\(rawValue).enabled") }
-    }
-
-    // 钉选到状态栏: pinned 的平台会常驻状态栏, 各占一块独立显示.
-    var isPinned: Bool {
-        get { UserDefaults.standard.bool(forKey: "quotabar.platform.\(rawValue).pinned") }
-        set { UserDefaults.standard.set(newValue, forKey: "quotabar.platform.\(rawValue).pinned") }
-    }
-
-    // 所有已钉选且已启用的平台, 按 enum 声明顺序.
-    // 禁用的平台即使 isPinned=true 也不会显示 (避免状态不一致).
-    static var allPinned: [PlatformType] {
-        allCases.filter { $0.isPinned && $0.isEnabled }
-    }
-}

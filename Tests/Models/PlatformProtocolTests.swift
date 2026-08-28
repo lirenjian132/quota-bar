@@ -21,8 +21,8 @@ final class PlatformProtocolTests: XCTestCase {
     func testPlatformUsageDataEquality() {
         let metric = UsageMetric(label: "Balance", currentValue: 10, totalValue: nil, unit: "USD", resetTime: nil)
         let date = Date()
-        let data1 = PlatformUsageData(platform: .glm_cn, displayName: "GLM", metrics: [metric], lastUpdated: date, isHealthy: true)
-        let data2 = PlatformUsageData(platform: .glm_cn, displayName: "GLM", metrics: [metric], lastUpdated: date, isHealthy: true)
+        let data1 = PlatformUsageData(platform: .glm_cn, instanceID: "glm_cn", displayName: "GLM", metrics: [metric], lastUpdated: date, isHealthy: true)
+        let data2 = PlatformUsageData(platform: .glm_cn, instanceID: "glm_cn", displayName: "GLM", metrics: [metric], lastUpdated: date, isHealthy: true)
         XCTAssertEqual(data1, data2)
     }
 

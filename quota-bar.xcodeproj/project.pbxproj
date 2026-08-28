@@ -12,48 +12,51 @@
 		0C5FA28B02B439557D526D8C /* I18nService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C28AC691014D3A92A1B45891 /* I18nService.swift */; };
 		0ECB5732D891EBA53C27286D /* ConfigServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A98E64CFC0C8846ECA523CCE /* ConfigServiceTests.swift */; };
 		103E40DB1758C79D15F47295 /* GLMPlatformService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71E2625E187DFF2C5625BA7D /* GLMPlatformService.swift */; };
+		19C93794FE75C72EE4975EFF /* MultiInstanceIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 452488BAFA15CAAEA24BC26A /* MultiInstanceIsolationTests.swift */; };
 		1F65B31E5AD7A7B01C4C50AD /* StatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB58DE1F6EE0E55B6A31E060 /* StatusBarController.swift */; };
 		200CF5C2F89173ED8FCCB368 /* PlatformUsageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 440BBA3BCDE1F2F0EAFB3BC0 /* PlatformUsageCache.swift */; };
 		2308A5A322EFAB5764A88D09 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 5BA5F1C77FF567BC1EBD0B12 /* Sparkle */; };
 		25A833C7FB785B4E84F9A82C /* LaunchAtLoginServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F53227F579903794FA18765 /* LaunchAtLoginServiceTests.swift */; };
+		25FA8AC9947336BB9C81653F /* PlatformInstanceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18D89E0FCCFC72B60B3013F0 /* PlatformInstanceStore.swift */; };
 		287A3C1B86EE20DE372057D9 /* ConfigService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A3DBA8DE8F526ED1553758 /* ConfigService.swift */; };
 		2AF3A452F873967F29636A02 /* KeychainStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12EE026036481EB5EA56C3FD /* KeychainStoreTests.swift */; };
 		2B2BAF3FA33C014C64980F65 /* GLMPlatformTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDFBAF9BB3FE72CFBCE0A68B /* GLMPlatformTests.swift */; };
+		2EBF0FB52239761B4D9F2E13 /* PlatformInstance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D3D5A2B487BDB8A027E5915 /* PlatformInstance.swift */; };
 		325700EC8F3CC5C9F13A624A /* PasteableTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E85AB9866C741C733FFFDDA /* PasteableTextField.swift */; };
 		37329BE3A96D8A43EC233B91 /* PlatformProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D232697862A3774F1E6E29A /* PlatformProtocolTests.swift */; };
 		3949AEAF25D160896475B059 /* MockLaunchAtLoginService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4FE41FD58D4B7D5DCA7955 /* MockLaunchAtLoginService.swift */; };
 		3B9D42484D500EAACF2615A3 /* UpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8010ECCA47DAC2A94F23E23E /* UpdateService.swift */; };
 		42E1C6AD67AAE7176E49C721 /* PlatformConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 084DFA337E4B0D33598A6C81 /* PlatformConfigStore.swift */; };
+		4332FA1571FA2D8DEA35C78E /* InstanceReorderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A4ADF0386438F4745035597 /* InstanceReorderTests.swift */; };
+		486A48792F1359D5EB24475A /* AccountManagementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1EB934DBD7B7AE071C3614B /* AccountManagementTests.swift */; };
 		49479A285BE57D357894C356 /* PlatformProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A7945B2EC582481E4890AB9 /* PlatformProtocol.swift */; };
 		4A521FB1AAF129FFA06CBAEE /* PlatformViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C4D9A5A65B4179E96448AC5 /* PlatformViewModel.swift */; };
-		4D2C5009C27AEE8BB48B7BEE /* screenshot.png in Resources */ = {isa = PBXBuildFile; fileRef = 95B7500E09285793963B8C5F /* screenshot.png */; };
 		505C7817AAA295E04F56D778 /* StatusBarViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12BA7301035BBB23D66925E9 /* StatusBarViewTests.swift */; };
 		58364B1777039DCB55E000A6 /* MockNetworkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6421AA3B46B6ABC036E35B08 /* MockNetworkService.swift */; };
 		6350A34AEECF06FC055D41BA /* LaunchAtLoginService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71848A30FE6691EDD06ABD37 /* LaunchAtLoginService.swift */; };
-		67C9F61ADDD4F53FF8C57649 /* screenshot2.png in Resources */ = {isa = PBXBuildFile; fileRef = BE73787319F749A39F9088CB /* screenshot2.png */; };
 		70A86445A42753EBF395EC1F /* PlatformManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CB8718DDB1B372AE925CD47 /* PlatformManager.swift */; };
 		70B75C2AD8FC2C63DD4BD3ED /* PlatformViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 023B1CB564A2E048FD8675F1 /* PlatformViewModelTests.swift */; };
 		76EB5EDE61066B3E3AB2A569 /* PlatformManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6DAD09F5D59074DE76ED748 /* PlatformManagerTests.swift */; };
 		7B9F7A49A96A20BA430E9F71 /* minimax.template.json in Resources */ = {isa = PBXBuildFile; fileRef = 5E09575915041C8761C950A8 /* minimax.template.json */; };
 		85765DCDD271D5DAE8D0B153 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 93960D7EC9A64DB2D93E0B51 /* Assets.xcassets */; };
+		8D6E5641A342F4A08DE786AD /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F512048312237A7FE8515C4 /* AppEnvironment.swift */; };
 		8E8D64B9707CAA96E2073688 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3A94E7E4C58176764A707B /* KeychainStore.swift */; };
 		91AEBA96283F1C42901240C6 /* AppVersion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72170EB2958C232A5B7EAD7D /* AppVersion.swift */; };
 		956ECFC4FD9F74956D8D5328 /* MiniMaxModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FFAFAE666EE291C5BE14137 /* MiniMaxModels.swift */; };
 		96D5806936DF98E266F18B36 /* PlatformSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E90CE4A6F3ED54CCE03D6A9 /* PlatformSelectionView.swift */; };
-		9720477F96D28ACDF3C0B744 /* InMemoryKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28A00F14EA29E689324B9FD8 /* InMemoryKeychainStore.swift */; };
-		99C25D75BF42011F4B651B43 /* screenshot-menu-bar.png in Resources */ = {isa = PBXBuildFile; fileRef = 1B17DC33D3E4A48B299CB251 /* screenshot-menu-bar.png */; };
 		A54197360F6E7417B40672CF /* PopoverContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6A41D4381294E4387649612 /* PopoverContentView.swift */; };
 		BEC0D46E1CC582226B63A38E /* ConfigServiceEnabledMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3045E2A012E86B1FCF0DE7 /* ConfigServiceEnabledMetricsTests.swift */; };
 		CBAE215B27E6F50D399CAD79 /* MiniMaxPlatformService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB6A472EEFCFC450D6A01DD /* MiniMaxPlatformService.swift */; };
+		CF32BB9A498F96D7E824FB37 /* PlatformInstanceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 836071D651BA022216189D7C /* PlatformInstanceStoreTests.swift */; };
 		D03AB6DC32355C4B61876063 /* glm.template.json in Resources */ = {isa = PBXBuildFile; fileRef = 0A631531F225E0B1404C0F9C /* glm.template.json */; };
 		D563C26F7277F257509324D8 /* MiniMaxPlatformTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EC84AF777250D37572AF820 /* MiniMaxPlatformTests.swift */; };
 		D568BEF3CAA3F73C9107EDC1 /* RefreshIntervalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B63EF1839A44BB7F0BFBBE1 /* RefreshIntervalTests.swift */; };
 		D72F3AB9C56AF326D6C05999 /* en.json in Resources */ = {isa = PBXBuildFile; fileRef = E7B2CA57DC0C6A9169BD1F81 /* en.json */; };
 		DB54BC12621BD69094F8D1AA /* RightClickStatusBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA75C8FA812932BF30AA01E /* RightClickStatusBarView.swift */; };
+		DDE6CC528DE805603512EA5C /* InMemoryKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E35B3912374D68A90ABC5658 /* InMemoryKeychainStore.swift */; };
 		E4F02DFD5BF56C6DE705DDD7 /* PlatformConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D09945CFD0A3B877A7B72AA /* PlatformConfigStoreTests.swift */; };
 		EE6A19954AB691C7A19299DD /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88AB05E0365F937DAD7E4B42 /* AppDelegate.swift */; };
 		F7F8310620A1CCBA5477352E /* zh-Hans.json in Resources */ = {isa = PBXBuildFile; fileRef = 7530C3B7D8FD856FE0584F92 /* zh-Hans.json */; };
-		FBA3C181804F718C47336DA2 /* screenshot-menu-bar2.png in Resources */ = {isa = PBXBuildFile; fileRef = F034350D366C82B0C45E746C /* screenshot-menu-bar2.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,20 +75,22 @@
 		0A631531F225E0B1404C0F9C /* glm.template.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = glm.template.json; sourceTree = "<group>"; };
 		12BA7301035BBB23D66925E9 /* StatusBarViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarViewTests.swift; sourceTree = "<group>"; };
 		12EE026036481EB5EA56C3FD /* KeychainStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStoreTests.swift; sourceTree = "<group>"; };
-		1B17DC33D3E4A48B299CB251 /* screenshot-menu-bar.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "screenshot-menu-bar.png"; sourceTree = "<group>"; };
+		18D89E0FCCFC72B60B3013F0 /* PlatformInstanceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformInstanceStore.swift; sourceTree = "<group>"; };
 		1E90CE4A6F3ED54CCE03D6A9 /* PlatformSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformSelectionView.swift; sourceTree = "<group>"; };
 		1EC84AF777250D37572AF820 /* MiniMaxPlatformTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxPlatformTests.swift; sourceTree = "<group>"; };
-		28A00F14EA29E689324B9FD8 /* InMemoryKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InMemoryKeychainStore.swift; sourceTree = "<group>"; };
 		2F53227F579903794FA18765 /* LaunchAtLoginServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLoginServiceTests.swift; sourceTree = "<group>"; };
 		38DA4A0A0CBD196B6B81E382 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		3BB6A472EEFCFC450D6A01DD /* MiniMaxPlatformService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxPlatformService.swift; sourceTree = "<group>"; };
 		440BBA3BCDE1F2F0EAFB3BC0 /* PlatformUsageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformUsageCache.swift; sourceTree = "<group>"; };
+		452488BAFA15CAAEA24BC26A /* MultiInstanceIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiInstanceIsolationTests.swift; sourceTree = "<group>"; };
 		457147EC3F63B62DB01A8FA3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		4A4ADF0386438F4745035597 /* InstanceReorderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstanceReorderTests.swift; sourceTree = "<group>"; };
 		4D09945CFD0A3B877A7B72AA /* PlatformConfigStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformConfigStoreTests.swift; sourceTree = "<group>"; };
 		5BA75C8FA812932BF30AA01E /* RightClickStatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightClickStatusBarView.swift; sourceTree = "<group>"; };
 		5E09575915041C8761C950A8 /* minimax.template.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = minimax.template.json; sourceTree = "<group>"; };
 		60CABA4916A6298957939081 /* quota-bar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "quota-bar.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		6421AA3B46B6ABC036E35B08 /* MockNetworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockNetworkService.swift; sourceTree = "<group>"; };
+		6F512048312237A7FE8515C4 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		6FFAFAE666EE291C5BE14137 /* MiniMaxModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxModels.swift; sourceTree = "<group>"; };
 		715D8C3273D5B13081D97EA8 /* StatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarView.swift; sourceTree = "<group>"; };
 		71848A30FE6691EDD06ABD37 /* LaunchAtLoginService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLoginService.swift; sourceTree = "<group>"; };
@@ -96,25 +101,26 @@
 		7C3A94E7E4C58176764A707B /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		7D232697862A3774F1E6E29A /* PlatformProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformProtocolTests.swift; sourceTree = "<group>"; };
 		8010ECCA47DAC2A94F23E23E /* UpdateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateService.swift; sourceTree = "<group>"; };
+		836071D651BA022216189D7C /* PlatformInstanceStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformInstanceStoreTests.swift; sourceTree = "<group>"; };
 		88AB05E0365F937DAD7E4B42 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		93960D7EC9A64DB2D93E0B51 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		95B7500E09285793963B8C5F /* screenshot.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = screenshot.png; sourceTree = "<group>"; };
 		9A7945B2EC582481E4890AB9 /* PlatformProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformProtocol.swift; sourceTree = "<group>"; };
 		9C4D9A5A65B4179E96448AC5 /* PlatformViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformViewModel.swift; sourceTree = "<group>"; };
 		9CB8718DDB1B372AE925CD47 /* PlatformManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformManager.swift; sourceTree = "<group>"; };
+		9D3D5A2B487BDB8A027E5915 /* PlatformInstance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformInstance.swift; sourceTree = "<group>"; };
 		9E85AB9866C741C733FFFDDA /* PasteableTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteableTextField.swift; sourceTree = "<group>"; };
 		A98E64CFC0C8846ECA523CCE /* ConfigServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigServiceTests.swift; sourceTree = "<group>"; };
 		BC4FE41FD58D4B7D5DCA7955 /* MockLaunchAtLoginService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockLaunchAtLoginService.swift; sourceTree = "<group>"; };
-		BE73787319F749A39F9088CB /* screenshot2.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = screenshot2.png; sourceTree = "<group>"; };
 		C0A3DBA8DE8F526ED1553758 /* ConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigService.swift; sourceTree = "<group>"; };
+		C1EB934DBD7B7AE071C3614B /* AccountManagementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountManagementTests.swift; sourceTree = "<group>"; };
 		C28AC691014D3A92A1B45891 /* I18nService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = I18nService.swift; sourceTree = "<group>"; };
 		CB3045E2A012E86B1FCF0DE7 /* ConfigServiceEnabledMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigServiceEnabledMetricsTests.swift; sourceTree = "<group>"; };
 		CB58DE1F6EE0E55B6A31E060 /* StatusBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarController.swift; sourceTree = "<group>"; };
 		D06BC065756F977794E0542F /* quota-bar-tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "quota-bar-tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		D6A41D4381294E4387649612 /* PopoverContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverContentView.swift; sourceTree = "<group>"; };
+		E35B3912374D68A90ABC5658 /* InMemoryKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InMemoryKeychainStore.swift; sourceTree = "<group>"; };
 		E6DAD09F5D59074DE76ED748 /* PlatformManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformManagerTests.swift; sourceTree = "<group>"; };
 		E7B2CA57DC0C6A9169BD1F81 /* en.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = en.json; sourceTree = "<group>"; };
-		F034350D366C82B0C45E746C /* screenshot-menu-bar2.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "screenshot-menu-bar2.png"; sourceTree = "<group>"; };
 		FDFBAF9BB3FE72CFBCE0A68B /* GLMPlatformTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GLMPlatformTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -154,6 +160,7 @@
 			isa = PBXGroup;
 			children = (
 				6FFAFAE666EE291C5BE14137 /* MiniMaxModels.swift */,
+				9D3D5A2B487BDB8A027E5915 /* PlatformInstance.swift */,
 				9A7945B2EC582481E4890AB9 /* PlatformProtocol.swift */,
 			);
 			path = Models;
@@ -178,7 +185,6 @@
 				A20188A371DB5D5CA8B39ED7 /* App */,
 				306B247C91CF9EBE08511E64 /* Models */,
 				20C767B28B080E9840B1660E /* Resources */,
-				A134CC291908D44EA707A61D /* screenshot */,
 				4A4F64F4CA193CDD8285B2DE /* Services */,
 				1A1B8886C36881CDF0E10420 /* StatusBar */,
 				3BA673ED36BC8B6D73DC517B /* Tests */,
@@ -207,8 +213,10 @@
 		4A4F64F4CA193CDD8285B2DE /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				6F512048312237A7FE8515C4 /* AppEnvironment.swift */,
 				C0A3DBA8DE8F526ED1553758 /* ConfigService.swift */,
 				C28AC691014D3A92A1B45891 /* I18nService.swift */,
+				E35B3912374D68A90ABC5658 /* InMemoryKeychainStore.swift */,
 				7C3A94E7E4C58176764A707B /* KeychainStore.swift */,
 				71848A30FE6691EDD06ABD37 /* LaunchAtLoginService.swift */,
 				8010ECCA47DAC2A94F23E23E /* UpdateService.swift */,
@@ -254,6 +262,7 @@
 			isa = PBXGroup;
 			children = (
 				084DFA337E4B0D33598A6C81 /* PlatformConfigStore.swift */,
+				18D89E0FCCFC72B60B3013F0 /* PlatformInstanceStore.swift */,
 				9CB8718DDB1B372AE925CD47 /* PlatformManager.swift */,
 				440BBA3BCDE1F2F0EAFB3BC0 /* PlatformUsageCache.swift */,
 				4F4065FD827B79699E2EFD59 /* GLMPlatform */,
@@ -273,26 +282,18 @@
 		8D8720C21B41C2E86570D60D /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				C1EB934DBD7B7AE071C3614B /* AccountManagementTests.swift */,
 				CB3045E2A012E86B1FCF0DE7 /* ConfigServiceEnabledMetricsTests.swift */,
 				A98E64CFC0C8846ECA523CCE /* ConfigServiceTests.swift */,
+				4A4ADF0386438F4745035597 /* InstanceReorderTests.swift */,
 				12EE026036481EB5EA56C3FD /* KeychainStoreTests.swift */,
 				2F53227F579903794FA18765 /* LaunchAtLoginServiceTests.swift */,
 				4D09945CFD0A3B877A7B72AA /* PlatformConfigStoreTests.swift */,
+				836071D651BA022216189D7C /* PlatformInstanceStoreTests.swift */,
 				E6DAD09F5D59074DE76ED748 /* PlatformManagerTests.swift */,
 				7B63EF1839A44BB7F0BFBBE1 /* RefreshIntervalTests.swift */,
 			);
 			path = Services;
-			sourceTree = "<group>";
-		};
-		A134CC291908D44EA707A61D /* screenshot */ = {
-			isa = PBXGroup;
-			children = (
-				1B17DC33D3E4A48B299CB251 /* screenshot-menu-bar.png */,
-				F034350D366C82B0C45E746C /* screenshot-menu-bar2.png */,
-				95B7500E09285793963B8C5F /* screenshot.png */,
-				BE73787319F749A39F9088CB /* screenshot2.png */,
-			);
-			path = screenshot;
 			sourceTree = "<group>";
 		};
 		A20188A371DB5D5CA8B39ED7 /* App */ = {
@@ -318,7 +319,6 @@
 		D653910033762E39B2800DC2 /* Mocks */ = {
 			isa = PBXGroup;
 			children = (
-				28A00F14EA29E689324B9FD8 /* InMemoryKeychainStore.swift */,
 				BC4FE41FD58D4B7D5DCA7955 /* MockLaunchAtLoginService.swift */,
 				6421AA3B46B6ABC036E35B08 /* MockNetworkService.swift */,
 			);
@@ -341,6 +341,7 @@
 			children = (
 				FDFBAF9BB3FE72CFBCE0A68B /* GLMPlatformTests.swift */,
 				1EC84AF777250D37572AF820 /* MiniMaxPlatformTests.swift */,
+				452488BAFA15CAAEA24BC26A /* MultiInstanceIsolationTests.swift */,
 			);
 			path = Platforms;
 			sourceTree = "<group>";
@@ -429,10 +430,6 @@
 				D72F3AB9C56AF326D6C05999 /* en.json in Resources */,
 				D03AB6DC32355C4B61876063 /* glm.template.json in Resources */,
 				7B9F7A49A96A20BA430E9F71 /* minimax.template.json in Resources */,
-				99C25D75BF42011F4B651B43 /* screenshot-menu-bar.png in Resources */,
-				FBA3C181804F718C47336DA2 /* screenshot-menu-bar2.png in Resources */,
-				4D2C5009C27AEE8BB48B7BEE /* screenshot.png in Resources */,
-				67C9F61ADDD4F53FF8C57649 /* screenshot2.png in Resources */,
 				F7F8310620A1CCBA5477352E /* zh-Hans.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -445,16 +442,20 @@
 			buildActionMask = 2147483647;
 			files = (
 				EE6A19954AB691C7A19299DD /* AppDelegate.swift in Sources */,
+				8D6E5641A342F4A08DE786AD /* AppEnvironment.swift in Sources */,
 				91AEBA96283F1C42901240C6 /* AppVersion.swift in Sources */,
 				287A3C1B86EE20DE372057D9 /* ConfigService.swift in Sources */,
 				103E40DB1758C79D15F47295 /* GLMPlatformService.swift in Sources */,
 				0C5FA28B02B439557D526D8C /* I18nService.swift in Sources */,
+				DDE6CC528DE805603512EA5C /* InMemoryKeychainStore.swift in Sources */,
 				8E8D64B9707CAA96E2073688 /* KeychainStore.swift in Sources */,
 				6350A34AEECF06FC055D41BA /* LaunchAtLoginService.swift in Sources */,
 				956ECFC4FD9F74956D8D5328 /* MiniMaxModels.swift in Sources */,
 				CBAE215B27E6F50D399CAD79 /* MiniMaxPlatformService.swift in Sources */,
 				325700EC8F3CC5C9F13A624A /* PasteableTextField.swift in Sources */,
 				42E1C6AD67AAE7176E49C721 /* PlatformConfigStore.swift in Sources */,
+				2EBF0FB52239761B4D9F2E13 /* PlatformInstance.swift in Sources */,
+				25FA8AC9947336BB9C81653F /* PlatformInstanceStore.swift in Sources */,
 				70A86445A42753EBF395EC1F /* PlatformManager.swift in Sources */,
 				49479A285BE57D357894C356 /* PlatformProtocol.swift in Sources */,
 				96D5806936DF98E266F18B36 /* PlatformSelectionView.swift in Sources */,
@@ -473,16 +474,19 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				486A48792F1359D5EB24475A /* AccountManagementTests.swift in Sources */,
 				BEC0D46E1CC582226B63A38E /* ConfigServiceEnabledMetricsTests.swift in Sources */,
 				0ECB5732D891EBA53C27286D /* ConfigServiceTests.swift in Sources */,
 				2B2BAF3FA33C014C64980F65 /* GLMPlatformTests.swift in Sources */,
-				9720477F96D28ACDF3C0B744 /* InMemoryKeychainStore.swift in Sources */,
+				4332FA1571FA2D8DEA35C78E /* InstanceReorderTests.swift in Sources */,
 				2AF3A452F873967F29636A02 /* KeychainStoreTests.swift in Sources */,
 				25A833C7FB785B4E84F9A82C /* LaunchAtLoginServiceTests.swift in Sources */,
 				D563C26F7277F257509324D8 /* MiniMaxPlatformTests.swift in Sources */,
 				3949AEAF25D160896475B059 /* MockLaunchAtLoginService.swift in Sources */,
 				58364B1777039DCB55E000A6 /* MockNetworkService.swift in Sources */,
+				19C93794FE75C72EE4975EFF /* MultiInstanceIsolationTests.swift in Sources */,
 				E4F02DFD5BF56C6DE705DDD7 /* PlatformConfigStoreTests.swift in Sources */,
+				CF32BB9A498F96D7E824FB37 /* PlatformInstanceStoreTests.swift in Sources */,
 				76EB5EDE61066B3E3AB2A569 /* PlatformManagerTests.swift in Sources */,
 				37329BE3A96D8A43EC233B91 /* PlatformProtocolTests.swift in Sources */,
 				70B75C2AD8FC2C63DD4BD3ED /* PlatformViewModelTests.swift in Sources */,
