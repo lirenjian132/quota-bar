@@ -8,6 +8,7 @@ class StatusBarController {
     private var statusItem: NSStatusItem
     private var statusBarView: RightClickStatusBarView
     private let viewModel: PlatformViewModel
+    private let launchAtLoginService: LaunchAtLoginServing = LaunchAtLoginService()
     private var popover: NSPopover?
     private var clickMonitor: Any?
 
@@ -170,6 +171,14 @@ class StatusBarController {
         let refreshItem = NSMenuItem(title: I18nService.shared.translate("menu.refreshInterval"), action: nil, keyEquivalent: "")
         refreshItem.submenu = refreshMenu
 
+        let launchAtLoginItem = NSMenuItem(
+            title: I18nService.shared.translate("menu.launchAtLogin"),
+            action: #selector(toggleLaunchAtLogin(_:)),
+            keyEquivalent: ""
+        )
+        launchAtLoginItem.target = self
+        launchAtLoginItem.state = launchAtLoginService.isEnabled ? .on : .off
+
         // Platform Enable/Disable submenu
         let platformMenu = NSMenu()
 
@@ -273,6 +282,7 @@ class StatusBarController {
         rootMenu.addItem(platformItem)
         rootMenu.addItem(enabledMetricsItem)
         rootMenu.addItem(languageItem)
+        rootMenu.addItem(launchAtLoginItem)
         rootMenu.addItem(NSMenuItem.separator())
 
         let aboutItem = NSMenuItem(
@@ -414,6 +424,22 @@ class StatusBarController {
             await self?.viewModel.fetchAllUsage()
             self?.viewModel.startAutoRefresh()
         }
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        let enable = sender.state != .on
+        do {
+            try launchAtLoginService.setEnabled(enable)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = I18nService.shared.translate("menu.launchAtLogin")
+            alert.informativeText = I18nService.shared.translate("menu.launchAtLogin.failed")
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: I18nService.shared.translate("menu.about.ok"))
+            alert.runModal()
+        }
+        // Clear menu so next right-click rebuilds from system status
+        statusItem.menu = nil
     }
 
     @objc private func setLanguageEnglish() {
