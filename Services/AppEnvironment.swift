@@ -23,12 +23,15 @@ enum AppEnvironment {
 
     /// 测试进程共用的内存 Keychain (同一进程必须单例, 否则各处状态分裂).
     private static let testKeychain: KeychainStoring = InMemoryKeychainStore()
+    /// 生产进程共用的文件 key 存储 (同上, 单例避免多实例缓存分裂).
+    private static let productionKeyStore: KeychainStoring = FileKeyStore()
 
     static var defaults: UserDefaults {
         isRunningTests ? testDefaults : .standard
     }
 
+    /// 生产走 FileKeyStore (0600 私有文件, 见其头注释); KeychainStore 仅剩迁移读取用.
     static func makeKeychain() -> KeychainStoring {
-        isRunningTests ? testKeychain : KeychainStore()
+        isRunningTests ? testKeychain : productionKeyStore
     }
 }

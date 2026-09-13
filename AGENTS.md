@@ -46,7 +46,8 @@ brew install create-dmg
 | `Services/Platforms/PlatformConfigStore.swift` | Per-instance config (UserDefaults dict + Keychain key) |
 | `Services/Platforms/PlatformInstanceStore.swift` | 账号实例注册表 + 老版本迁移 + 增删改移 |
 | `Services/AppEnvironment.swift` | 测试进程存储隔离路由 |
-| `Services/KeychainStore.swift` | API key 的 Keychain 存取 |
+| `Services/KeychainStore.swift` | API key 的 Keychain 存取 (仅迁移读取) |
+| `Services/FileKeyStore.swift` | API key 的文件存储 (0600) + Keychain→文件一次性迁移 |
 | `Services/ConfigService.swift` | Global config (display mode, active platform, locale) |
 | `Services/NetworkService.swift` | Network abstraction for testability |
 | `StatusBar/` | Menu bar UI - `StatusBarController` manages NSStatusItem |
@@ -61,7 +62,7 @@ brew install create-dmg
 - `NetworkService` - network abstraction (URLSession wrapper for testability)
 - `PlatformType` - enum identifying supported platforms
 - `PlatformInstance` - 账号实例 (同一平台可多账号); `PlatformInstanceStore` 持有全部实例
-- `KeychainStoring` - Keychain abstraction (`KeychainStore` 生产 / `InMemoryKeychainStore` 测试)
+- `KeychainStoring` - key 存储抽象 (`FileKeyStore` 生产: 0600 私有文件 / `InMemoryKeychainStore` 测试; `KeychainStore` 仅用于旧 Keychain 一次性迁移)
 - `AppEnvironment` - 测试进程存储路由: 单元测试自动走隔离 defaults suite + 内存 Keychain, **测试永不触碰真实配置** (新写测试勿直接用 UserDefaults.standard / KeychainStore)
 
 ### Key Patterns

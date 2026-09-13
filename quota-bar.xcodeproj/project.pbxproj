@@ -46,6 +46,7 @@
 		96D5806936DF98E266F18B36 /* PlatformSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E90CE4A6F3ED54CCE03D6A9 /* PlatformSelectionView.swift */; };
 		A54197360F6E7417B40672CF /* PopoverContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6A41D4381294E4387649612 /* PopoverContentView.swift */; };
 		BEC0D46E1CC582226B63A38E /* ConfigServiceEnabledMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3045E2A012E86B1FCF0DE7 /* ConfigServiceEnabledMetricsTests.swift */; };
+		C144C5FDC2B16687DEF6B60F /* FileKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8594FEA94E81A6D8B34A3A5 /* FileKeyStore.swift */; };
 		CBAE215B27E6F50D399CAD79 /* MiniMaxPlatformService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB6A472EEFCFC450D6A01DD /* MiniMaxPlatformService.swift */; };
 		CF32BB9A498F96D7E824FB37 /* PlatformInstanceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 836071D651BA022216189D7C /* PlatformInstanceStoreTests.swift */; };
 		D03AB6DC32355C4B61876063 /* glm.template.json in Resources */ = {isa = PBXBuildFile; fileRef = 0A631531F225E0B1404C0F9C /* glm.template.json */; };
@@ -57,6 +58,7 @@
 		E4F02DFD5BF56C6DE705DDD7 /* PlatformConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D09945CFD0A3B877A7B72AA /* PlatformConfigStoreTests.swift */; };
 		EE6A19954AB691C7A19299DD /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88AB05E0365F937DAD7E4B42 /* AppDelegate.swift */; };
 		F7F8310620A1CCBA5477352E /* zh-Hans.json in Resources */ = {isa = PBXBuildFile; fileRef = 7530C3B7D8FD856FE0584F92 /* zh-Hans.json */; };
+		F915048BD49DB45260227EDE /* FileKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C73012372582BAAEA7DB52B8 /* FileKeyStoreTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -114,10 +116,12 @@
 		C0A3DBA8DE8F526ED1553758 /* ConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigService.swift; sourceTree = "<group>"; };
 		C1EB934DBD7B7AE071C3614B /* AccountManagementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountManagementTests.swift; sourceTree = "<group>"; };
 		C28AC691014D3A92A1B45891 /* I18nService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = I18nService.swift; sourceTree = "<group>"; };
+		C73012372582BAAEA7DB52B8 /* FileKeyStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileKeyStoreTests.swift; sourceTree = "<group>"; };
 		CB3045E2A012E86B1FCF0DE7 /* ConfigServiceEnabledMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigServiceEnabledMetricsTests.swift; sourceTree = "<group>"; };
 		CB58DE1F6EE0E55B6A31E060 /* StatusBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarController.swift; sourceTree = "<group>"; };
 		D06BC065756F977794E0542F /* quota-bar-tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "quota-bar-tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		D6A41D4381294E4387649612 /* PopoverContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverContentView.swift; sourceTree = "<group>"; };
+		D8594FEA94E81A6D8B34A3A5 /* FileKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileKeyStore.swift; sourceTree = "<group>"; };
 		E35B3912374D68A90ABC5658 /* InMemoryKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InMemoryKeychainStore.swift; sourceTree = "<group>"; };
 		E6DAD09F5D59074DE76ED748 /* PlatformManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformManagerTests.swift; sourceTree = "<group>"; };
 		E7B2CA57DC0C6A9169BD1F81 /* en.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = en.json; sourceTree = "<group>"; };
@@ -215,6 +219,7 @@
 			children = (
 				6F512048312237A7FE8515C4 /* AppEnvironment.swift */,
 				C0A3DBA8DE8F526ED1553758 /* ConfigService.swift */,
+				D8594FEA94E81A6D8B34A3A5 /* FileKeyStore.swift */,
 				C28AC691014D3A92A1B45891 /* I18nService.swift */,
 				E35B3912374D68A90ABC5658 /* InMemoryKeychainStore.swift */,
 				7C3A94E7E4C58176764A707B /* KeychainStore.swift */,
@@ -285,6 +290,7 @@
 				C1EB934DBD7B7AE071C3614B /* AccountManagementTests.swift */,
 				CB3045E2A012E86B1FCF0DE7 /* ConfigServiceEnabledMetricsTests.swift */,
 				A98E64CFC0C8846ECA523CCE /* ConfigServiceTests.swift */,
+				C73012372582BAAEA7DB52B8 /* FileKeyStoreTests.swift */,
 				4A4ADF0386438F4745035597 /* InstanceReorderTests.swift */,
 				12EE026036481EB5EA56C3FD /* KeychainStoreTests.swift */,
 				2F53227F579903794FA18765 /* LaunchAtLoginServiceTests.swift */,
@@ -445,6 +451,7 @@
 				8D6E5641A342F4A08DE786AD /* AppEnvironment.swift in Sources */,
 				91AEBA96283F1C42901240C6 /* AppVersion.swift in Sources */,
 				287A3C1B86EE20DE372057D9 /* ConfigService.swift in Sources */,
+				C144C5FDC2B16687DEF6B60F /* FileKeyStore.swift in Sources */,
 				103E40DB1758C79D15F47295 /* GLMPlatformService.swift in Sources */,
 				0C5FA28B02B439557D526D8C /* I18nService.swift in Sources */,
 				DDE6CC528DE805603512EA5C /* InMemoryKeychainStore.swift in Sources */,
@@ -477,6 +484,7 @@
 				486A48792F1359D5EB24475A /* AccountManagementTests.swift in Sources */,
 				BEC0D46E1CC582226B63A38E /* ConfigServiceEnabledMetricsTests.swift in Sources */,
 				0ECB5732D891EBA53C27286D /* ConfigServiceTests.swift in Sources */,
+				F915048BD49DB45260227EDE /* FileKeyStoreTests.swift in Sources */,
 				2B2BAF3FA33C014C64980F65 /* GLMPlatformTests.swift in Sources */,
 				4332FA1571FA2D8DEA35C78E /* InstanceReorderTests.swift in Sources */,
 				2AF3A452F873967F29636A02 /* KeychainStoreTests.swift in Sources */,
