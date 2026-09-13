@@ -690,13 +690,8 @@ class StatusBarController {
     // MARK: - Pinned Items Management
 
     // 平台启用/钉选状态变化时, 重建钉选 item 列表.
-    // NSStatusItem 的左右位置由创建顺序决定, 增量 rebuild 挪不动已存在的 item,
-    // 顺序变化必须全拆重建.
     @objc private func handleInstancesReordered() {
-        pinnedItems.values.forEach { NSStatusBar.system.removeStatusItem($0) }
-        pinnedItems.removeAll()
-        pinnedViews.removeAll()
-        rebuildPinnedItems()
+        rebuildPinnedItems()  // 全拆重建 (见其注释)
         updateAll(data: viewModel.platformData)
     }
 
@@ -715,21 +710,17 @@ class StatusBarController {
         updateAll(data: viewModel.platformData)
     }
 
-    // 根据当前 isPinned 状态, 增删 NSStatusItem.
+    // 按当前钉选状态全拆重建 NSStatusItem.
+    // 为什么必须全量而非增量: NSStatusItem 没有指定插入位置的 API, 单独新建的
+    // item 总落在已有块的左侧 — 增量补建无法控制新块落点, 会造成显示顺序与
+    // 实例列表脱节. 全量按 reversed 创建 (macOS 将新 item 插在左侧, 创建序与
+    // 显示序相反), 才能保证 状态栏显示顺序 == 实例列表顺序 (菜单/左右移语义一致).
     private func rebuildPinnedItems() {
-        let pinned = Set(PlatformInstance.allPinned.map(\.id))
-        let existing = Set(pinnedItems.keys)
+        pinnedItems.values.forEach { NSStatusBar.system.removeStatusItem($0) }
+        pinnedItems.removeAll()
+        pinnedViews.removeAll()
 
-        // 移除不再钉选的
-        for id in existing.subtracting(pinned) {
-            if let item = pinnedItems.removeValue(forKey: id) {
-                NSStatusBar.system.removeStatusItem(item)
-            }
-            pinnedViews.removeValue(forKey: id)
-        }
-
-        // 新增刚钉选的
-        for instance in PlatformInstance.allPinned where !existing.contains(instance.id) {
+        for instance in PlatformInstance.allPinned.reversed() {
             createPinnedItem(for: instance)
         }
     }
