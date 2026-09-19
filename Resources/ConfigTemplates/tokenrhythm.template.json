@@ -1,0 +1,7 @@
+{
+  "api_base_url": "https://tokenrhythm.studio/api/wallet/summary",
+  "auth_header": "Cookie",
+  "auth_prefix": "tr_session=",
+  "api_key": "",
+  "region": "domestic"
+}

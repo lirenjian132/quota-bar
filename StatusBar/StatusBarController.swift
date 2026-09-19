@@ -291,10 +291,17 @@ class StatusBarController {
         // 注意: representedObject 一律用 instance.id (String) — Swift enum 经 ObjC
         // 桥接会包成 NSObject wrapper, 取时 as? 反解会失败.
         let enabledMetricsMenu = NSMenu()
-        let availableLabels = ["five_hour", "weekly_limit", "mcp_monthly"]
         for instance in PlatformInstanceStore.shared.instances {
             let platSub = NSMenu()
             let current = ConfigService.shared.enabledMetrics(for: instance)
+            // 可勾选指标按平台区分: 套餐型平台共用 3 项, 余额型 (TokenRhythm) 只有 balance.
+            let availableLabels: [String]
+            switch instance.platformType {
+            case .minimax_cn, .glm_cn:
+                availableLabels = ["five_hour", "weekly_limit", "mcp_monthly"]
+            case .tokenrhythm:
+                availableLabels = ["balance"]
+            }
             for label in availableLabels {
                 let item = NSMenuItem(
                     title: I18nService.shared.translate("menu.metric.\(label)"),

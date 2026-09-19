@@ -3,11 +3,13 @@ import Foundation
 enum PlatformType: String, Codable, CaseIterable, Hashable {
     case minimax_cn
     case glm_cn
+    case tokenrhythm
 
     var displayName: String {
         switch self {
         case .minimax_cn: return "MiniMax"
         case .glm_cn: return "GLM"
+        case .tokenrhythm: return "基元律动"
         }
     }
 }

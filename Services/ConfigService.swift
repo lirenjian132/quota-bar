@@ -180,6 +180,8 @@ final class ConfigService {
             return ["five_hour"]
         case .glm_cn:
             return ["five_hour", "weekly_limit"]
+        case .tokenrhythm:
+            return ["balance"]
         }
     }
 

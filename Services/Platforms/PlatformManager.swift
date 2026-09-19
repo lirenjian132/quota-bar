@@ -23,6 +23,7 @@ final class PlatformManager {
              switch type {
              case .minimax_cn: return MiniMaxPlatformAPIService()
              case .glm_cn: return GLMPlatformAPIService()
+             case .tokenrhythm: return TokenRhythmPlatformAPIService()
              }
          }) {
         self.networkService = networkService

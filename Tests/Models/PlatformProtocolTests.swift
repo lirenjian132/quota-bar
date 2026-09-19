@@ -5,17 +5,20 @@ final class PlatformProtocolTests: XCTestCase {
     func testPlatformTypeDisplayNames() {
         XCTAssertEqual(PlatformType.minimax_cn.displayName, "MiniMax")
         XCTAssertEqual(PlatformType.glm_cn.displayName, "GLM")
+        XCTAssertEqual(PlatformType.tokenrhythm.displayName, "基元律动")
     }
 
     func testPlatformTypeAllCases() {
-        XCTAssertEqual(PlatformType.allCases.count, 2)
+        XCTAssertEqual(PlatformType.allCases.count, 3)
         XCTAssertTrue(PlatformType.allCases.contains(.minimax_cn))
         XCTAssertTrue(PlatformType.allCases.contains(.glm_cn))
+        XCTAssertTrue(PlatformType.allCases.contains(.tokenrhythm))
     }
 
     func testPlatformTypeRawValues() {
         XCTAssertEqual(PlatformType.minimax_cn.rawValue, "minimax_cn")
         XCTAssertEqual(PlatformType.glm_cn.rawValue, "glm_cn")
+        XCTAssertEqual(PlatformType.tokenrhythm.rawValue, "tokenrhythm")
     }
 
     func testPlatformUsageDataEquality() {

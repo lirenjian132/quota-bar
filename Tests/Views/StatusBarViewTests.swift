@@ -57,4 +57,58 @@ final class StatusBarViewTests: XCTestCase {
         XCTAssertEqual(StatusBarViewHelper.formatMetricText(m, displayMode: .remaining), "80")
         XCTAssertEqual(StatusBarViewHelper.formatMetricText(m, displayMode: .used), "20")
     }
+
+    func testFormatMetricTextBalanceShowsInteger() {
+        // 余额型 metric (无 total): 一律四舍五入到整数, 个位精度足够判断换账号.
+        let m = UsageMetric(label: "balance", currentValue: 253.762, totalValue: nil, unit: "CNY", resetTime: nil)
+        XCTAssertEqual(StatusBarViewHelper.formatMetricText(m, displayMode: .remaining), "254")
+        XCTAssertEqual(StatusBarViewHelper.formatMetricText(m, displayMode: .used), "254")
+
+        let low = UsageMetric(label: "balance", currentValue: 8.49, totalValue: nil, unit: "CNY", resetTime: nil)
+        XCTAssertEqual(StatusBarViewHelper.formatMetricText(low, displayMode: .used), "8")
+
+        let zero = UsageMetric(label: "balance", currentValue: 0, totalValue: nil, unit: "CNY", resetTime: nil)
+        XCTAssertEqual(StatusBarViewHelper.formatMetricText(zero, displayMode: .used), "0")
+    }
+
+    private func balanceData(expiry: Date?, healthy: Bool) -> PlatformUsageData {
+        PlatformUsageData(
+            platform: .tokenrhythm,
+            instanceID: "tokenrhythm",
+            displayName: "T1",
+            metrics: [UsageMetric(label: "balance", currentValue: 100, totalValue: nil, unit: "CNY", resetTime: expiry)],
+            lastUpdated: Date(),
+            isHealthy: healthy
+        )
+    }
+
+    func testStatusColorBalanceExpiryTiers() {
+        // 到期 3 天内 → 红 (钱马上蒸发, 最急)
+        XCTAssertEqual(StatusBarViewHelper.statusColor(for: balanceData(expiry: Date().addingTimeInterval(2 * 86400), healthy: true)), .red)
+        // 到期 7 天内 (但 > 3 天) → 黄
+        XCTAssertEqual(StatusBarViewHelper.statusColor(for: balanceData(expiry: Date().addingTimeInterval(5 * 86400), healthy: true)), .yellow)
+        // 无到期信息 + 健康 → 绿
+        XCTAssertEqual(StatusBarViewHelper.statusColor(for: balanceData(expiry: nil, healthy: true)), .green)
+        // 无到期信息 + 不健康 (低余额) → 红
+        XCTAssertEqual(StatusBarViewHelper.statusColor(for: balanceData(expiry: nil, healthy: false)), .red)
+        // nil 数据 / 空 metrics → secondary
+        XCTAssertEqual(StatusBarViewHelper.statusColor(for: nil), .secondary)
+    }
+
+    func testStatusColorPercentageTiersUnchanged() {
+        // 回归: 百分比型 (有 total) 的红黄绿阈值不受余额型新增逻辑影响.
+        func pctData(_ value: Double) -> PlatformUsageData {
+            PlatformUsageData(
+                platform: .glm_cn,
+                instanceID: "glm_cn",
+                displayName: "GLM",
+                metrics: [UsageMetric(label: "five_hour", currentValue: value, totalValue: 100, unit: "%", resetTime: nil)],
+                lastUpdated: Date(),
+                isHealthy: true
+            )
+        }
+        XCTAssertEqual(StatusBarViewHelper.statusColor(for: pctData(5)), .red)
+        XCTAssertEqual(StatusBarViewHelper.statusColor(for: pctData(30)), .yellow)
+        XCTAssertEqual(StatusBarViewHelper.statusColor(for: pctData(80)), .green)
+    }
 }

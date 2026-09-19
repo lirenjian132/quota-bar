@@ -12,6 +12,7 @@
 		0C5FA28B02B439557D526D8C /* I18nService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C28AC691014D3A92A1B45891 /* I18nService.swift */; };
 		0ECB5732D891EBA53C27286D /* ConfigServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A98E64CFC0C8846ECA523CCE /* ConfigServiceTests.swift */; };
 		103E40DB1758C79D15F47295 /* GLMPlatformService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71E2625E187DFF2C5625BA7D /* GLMPlatformService.swift */; };
+		117BDDBA970BF26AB483FFE2 /* TokenRhythmPlatformService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 976CC514E0CD0E0715B60C9A /* TokenRhythmPlatformService.swift */; };
 		19C93794FE75C72EE4975EFF /* MultiInstanceIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 452488BAFA15CAAEA24BC26A /* MultiInstanceIsolationTests.swift */; };
 		1F65B31E5AD7A7B01C4C50AD /* StatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB58DE1F6EE0E55B6A31E060 /* StatusBarController.swift */; };
 		200CF5C2F89173ED8FCCB368 /* PlatformUsageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 440BBA3BCDE1F2F0EAFB3BC0 /* PlatformUsageCache.swift */; };
@@ -45,6 +46,8 @@
 		956ECFC4FD9F74956D8D5328 /* MiniMaxModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FFAFAE666EE291C5BE14137 /* MiniMaxModels.swift */; };
 		96D5806936DF98E266F18B36 /* PlatformSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E90CE4A6F3ED54CCE03D6A9 /* PlatformSelectionView.swift */; };
 		A54197360F6E7417B40672CF /* PopoverContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6A41D4381294E4387649612 /* PopoverContentView.swift */; };
+		AA587DF4053A0053A4FD5B9D /* tokenrhythm.template.json in Resources */ = {isa = PBXBuildFile; fileRef = E9724096BB4F65062D5758AD /* tokenrhythm.template.json */; };
+		B2A1B7E625CAFA7C43E80D01 /* TokenRhythmPlatformTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C83975F3441DFAEC05FD1074 /* TokenRhythmPlatformTests.swift */; };
 		BEC0D46E1CC582226B63A38E /* ConfigServiceEnabledMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3045E2A012E86B1FCF0DE7 /* ConfigServiceEnabledMetricsTests.swift */; };
 		C144C5FDC2B16687DEF6B60F /* FileKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8594FEA94E81A6D8B34A3A5 /* FileKeyStore.swift */; };
 		CBAE215B27E6F50D399CAD79 /* MiniMaxPlatformService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB6A472EEFCFC450D6A01DD /* MiniMaxPlatformService.swift */; };
@@ -106,6 +109,7 @@
 		836071D651BA022216189D7C /* PlatformInstanceStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformInstanceStoreTests.swift; sourceTree = "<group>"; };
 		88AB05E0365F937DAD7E4B42 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		93960D7EC9A64DB2D93E0B51 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		976CC514E0CD0E0715B60C9A /* TokenRhythmPlatformService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenRhythmPlatformService.swift; sourceTree = "<group>"; };
 		9A7945B2EC582481E4890AB9 /* PlatformProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformProtocol.swift; sourceTree = "<group>"; };
 		9C4D9A5A65B4179E96448AC5 /* PlatformViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformViewModel.swift; sourceTree = "<group>"; };
 		9CB8718DDB1B372AE925CD47 /* PlatformManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformManager.swift; sourceTree = "<group>"; };
@@ -117,6 +121,7 @@
 		C1EB934DBD7B7AE071C3614B /* AccountManagementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountManagementTests.swift; sourceTree = "<group>"; };
 		C28AC691014D3A92A1B45891 /* I18nService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = I18nService.swift; sourceTree = "<group>"; };
 		C73012372582BAAEA7DB52B8 /* FileKeyStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileKeyStoreTests.swift; sourceTree = "<group>"; };
+		C83975F3441DFAEC05FD1074 /* TokenRhythmPlatformTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenRhythmPlatformTests.swift; sourceTree = "<group>"; };
 		CB3045E2A012E86B1FCF0DE7 /* ConfigServiceEnabledMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigServiceEnabledMetricsTests.swift; sourceTree = "<group>"; };
 		CB58DE1F6EE0E55B6A31E060 /* StatusBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarController.swift; sourceTree = "<group>"; };
 		D06BC065756F977794E0542F /* quota-bar-tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "quota-bar-tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -125,6 +130,7 @@
 		E35B3912374D68A90ABC5658 /* InMemoryKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InMemoryKeychainStore.swift; sourceTree = "<group>"; };
 		E6DAD09F5D59074DE76ED748 /* PlatformManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformManagerTests.swift; sourceTree = "<group>"; };
 		E7B2CA57DC0C6A9169BD1F81 /* en.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = en.json; sourceTree = "<group>"; };
+		E9724096BB4F65062D5758AD /* tokenrhythm.template.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenrhythm.template.json; sourceTree = "<group>"; };
 		FDFBAF9BB3FE72CFBCE0A68B /* GLMPlatformTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GLMPlatformTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -259,6 +265,7 @@
 			children = (
 				0A631531F225E0B1404C0F9C /* glm.template.json */,
 				5E09575915041C8761C950A8 /* minimax.template.json */,
+				E9724096BB4F65062D5758AD /* tokenrhythm.template.json */,
 			);
 			path = ConfigTemplates;
 			sourceTree = "<group>";
@@ -272,6 +279,7 @@
 				440BBA3BCDE1F2F0EAFB3BC0 /* PlatformUsageCache.swift */,
 				4F4065FD827B79699E2EFD59 /* GLMPlatform */,
 				809E6853BE7DA2EA096D6AD8 /* MiniMaxPlatform */,
+				F02FADF239EDFC5A143E8783 /* TokenRhythmPlatform */,
 			);
 			path = Platforms;
 			sourceTree = "<group>";
@@ -342,12 +350,21 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
+		F02FADF239EDFC5A143E8783 /* TokenRhythmPlatform */ = {
+			isa = PBXGroup;
+			children = (
+				976CC514E0CD0E0715B60C9A /* TokenRhythmPlatformService.swift */,
+			);
+			path = TokenRhythmPlatform;
+			sourceTree = "<group>";
+		};
 		FDDDD3B304B80E0A930C2951 /* Platforms */ = {
 			isa = PBXGroup;
 			children = (
 				FDFBAF9BB3FE72CFBCE0A68B /* GLMPlatformTests.swift */,
 				1EC84AF777250D37572AF820 /* MiniMaxPlatformTests.swift */,
 				452488BAFA15CAAEA24BC26A /* MultiInstanceIsolationTests.swift */,
+				C83975F3441DFAEC05FD1074 /* TokenRhythmPlatformTests.swift */,
 			);
 			path = Platforms;
 			sourceTree = "<group>";
@@ -436,6 +453,7 @@
 				D72F3AB9C56AF326D6C05999 /* en.json in Resources */,
 				D03AB6DC32355C4B61876063 /* glm.template.json in Resources */,
 				7B9F7A49A96A20BA430E9F71 /* minimax.template.json in Resources */,
+				AA587DF4053A0053A4FD5B9D /* tokenrhythm.template.json in Resources */,
 				F7F8310620A1CCBA5477352E /* zh-Hans.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -472,6 +490,7 @@
 				DB54BC12621BD69094F8D1AA /* RightClickStatusBarView.swift in Sources */,
 				1F65B31E5AD7A7B01C4C50AD /* StatusBarController.swift in Sources */,
 				012C72E225052E73E9FEFA74 /* StatusBarView.swift in Sources */,
+				117BDDBA970BF26AB483FFE2 /* TokenRhythmPlatformService.swift in Sources */,
 				3B9D42484D500EAACF2615A3 /* UpdateService.swift in Sources */,
 				00E59E55A8C84C969A80E39D /* main.swift in Sources */,
 			);
@@ -500,6 +519,7 @@
 				70B75C2AD8FC2C63DD4BD3ED /* PlatformViewModelTests.swift in Sources */,
 				D568BEF3CAA3F73C9107EDC1 /* RefreshIntervalTests.swift in Sources */,
 				505C7817AAA295E04F56D778 /* StatusBarViewTests.swift in Sources */,
+				B2A1B7E625CAFA7C43E80D01 /* TokenRhythmPlatformTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

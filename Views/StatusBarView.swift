@@ -2,6 +2,29 @@ import SwiftUI
 
 /// 把渲染逻辑抽成 pure helper, 让单测可以脱离 SwiftUI runtime 直接验证过滤 / 格式.
 enum StatusBarViewHelper {
+    /// 状态点颜色: 只看第一个 metric.
+    ///   - 百分比型 (有 total): <10% 红, <50% 黄, 否则绿
+    ///   - 余额型 (无 total): 到期 3 天内红 / 7 天内黄 (钱要蒸发, 比余额低更急),
+    ///     无到期信息时按 isHealthy
+    static func statusColor(for data: PlatformUsageData?) -> Color {
+        guard let data else { return .secondary }
+        if data.metrics.isEmpty { return .secondary }
+        if let metric = data.metrics.first, metric.unit != "unlimited" {
+            if let total = metric.totalValue, total > 0 {
+                let remainingRatio = metric.currentValue / total
+                if remainingRatio < 0.1 { return .red }
+                if remainingRatio < 0.5 { return .yellow }
+                return .green
+            }
+            if let expiry = metric.resetTime {
+                let days = expiry.timeIntervalSinceNow / 86400
+                if days < 3 { return .red }
+                if days < 7 { return .yellow }
+            }
+        }
+        return data.isHealthy ? .green : .red
+    }
+
     /// 按 enabledLabels 过滤并排序 metrics. nil 表示"不过滤", 兼容老调用.
     /// 顺序: 严格按 enabledLabels 给的顺序; enabledLabels 里没有的 metric 会被丢弃.
     static func visibleMetrics(from metrics: [UsageMetric], enabledLabels: [String]?) -> [UsageMetric] {
@@ -29,10 +52,12 @@ enum StatusBarViewHelper {
         return "\(Int(ratio * 100))"
     }
 
+    // 余额型 metric 专用 (无 totalValue 的绝对金额, 如 TokenRhythm CNY).
+    // 不要用于 times/次数类: 那类应带 totalValue 走上面的百分比分支.
     private static func formatBalance(_ value: Double) -> String {
         if value >= 1000 { return String(format: "%.1fK", value / 1000) }
-        if value >= 100 { return String(format: "%.0f", value) }
-        return String(format: "%.1f", value)
+        // 余额一律显示整数: 状态栏空间有限, 个位精度足够判断"该不该换账号".
+        return String(format: "%.0f", value)
     }
 }
 
@@ -64,17 +89,7 @@ struct StatusBarView: View {
     }
 
     private var statusColor: Color {
-        guard let data = platformData else { return .secondary }
-        if data.metrics.isEmpty { return .secondary }
-        // 颜色只看第一个 metric (5h 是最重要的); ∞ 不参与颜色.
-        if let metric = data.metrics.first, metric.unit != "unlimited",
-           let total = metric.totalValue, total > 0 {
-            let remainingRatio = metric.currentValue / total
-            if remainingRatio < 0.1 { return .red }
-            if remainingRatio < 0.5 { return .yellow }
-            return .green
-        }
-        return data.isHealthy ? .green : .red
+        StatusBarViewHelper.statusColor(for: platformData)
     }
 
     var body: some View {

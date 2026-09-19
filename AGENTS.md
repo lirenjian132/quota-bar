@@ -41,6 +41,7 @@ brew install create-dmg
 | `Services/` | Business logic |
 | `Services/Platforms/` | Platform-specific services |
 | `Services/Platforms/MiniMaxPlatform/` | MiniMax API service |
+| `Services/Platforms/TokenRhythmPlatform/` | 基元律动 (TokenRhythm) 余额 service — 网页端 `/api/wallet/summary` + `tr_session` cookie 鉴权 (凭据存 FileKeyStore; 采集流程见 CHANGELOG 2.3.0, 禁止引导用户点网页「退出登录」) |
 | `Services/Platforms/DeepSeekPlatform/` | DeepSeek API service |
 | `Services/Platforms/PlatformManager.swift` | Orchestrates all platform services |
 | `Services/Platforms/PlatformConfigStore.swift` | Per-instance config (UserDefaults dict + Keychain key) |

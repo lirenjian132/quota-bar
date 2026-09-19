@@ -148,14 +148,17 @@ struct PopoverContentView: View {
                     Text("\(I18nService.shared.translate("popover.remaining")): \(formatCredits(metric.currentValue))/\(formatCredits(total)) \(metric.unit)")
                         .font(.caption)
                 } else {
-                    Text("\(metric.currentValue, specifier: "%.2f") \(metric.unit)")
+                    // 无 total 的绝对值 metric (TokenRhythm 余额): 与状态栏 formatBalance
+                    // 同口径取整, 避免"状态栏 254 / 弹窗 253.76"的割裂.
+                    Text("\(metric.currentValue, specifier: "%.0f") \(metric.unit)")
                         .font(.caption)
                 }
                 Spacer()
             }
 
             if let resetTime = metric.resetTime {
-                Text(I18nService.shared.translate("popover.reset") + ": " + formatResetTime(resetTime))
+                // 余额型的 resetTime 语义是"最早到期"(赠金蒸发日), 与套餐重置日区分文案.
+                Text(I18nService.shared.translate(metric.label == "balance" ? "popover.expiry" : "popover.reset") + ": " + formatResetTime(resetTime))
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -214,11 +217,11 @@ struct PopoverContentView: View {
 
     private var configSection: some View {
         VStack(spacing: 12) {
-            Text(String(format: I18nService.shared.translate("popover.configurePlatform"), viewModel.configInstance?.displayTitle ?? ""))
+            Text(String(format: I18nService.shared.translate(configTitleKey), viewModel.configInstance?.displayTitle ?? ""))
                 .font(.subheadline.bold())
 
             HStack(spacing: 8) {
-                PasteableTextField(text: $viewModel.apiKeyInput, placeholder: I18nService.shared.translate("popover.inputPlaceholder"), isSecure: !viewModel.showingAPIKey)
+                PasteableTextField(text: $viewModel.apiKeyInput, placeholder: I18nService.shared.translate(configPlaceholderKey), isSecure: !viewModel.showingAPIKey)
                     .frame(height: 60)
 
                 Button(action: { viewModel.showingAPIKey.toggle() }) {
@@ -244,6 +247,19 @@ struct PopoverContentView: View {
         .padding()
         .background(Color.accentColor.opacity(0.08))
         .cornerRadius(8)
+    }
+
+    // TokenRhythm 的凭据不是 API key 而是 tr_session 会话值, 文案分开以免误导.
+    private var configTitleKey: String {
+        viewModel.configInstance?.platformType == .tokenrhythm
+            ? "popover.configurePlatform.tokenrhythm"
+            : "popover.configurePlatform"
+    }
+
+    private var configPlaceholderKey: String {
+        viewModel.configInstance?.platformType == .tokenrhythm
+            ? "popover.inputPlaceholder.tokenrhythm"
+            : "popover.inputPlaceholder"
     }
 
     // 保存按钮是否可用: 填了 API Key 即可
