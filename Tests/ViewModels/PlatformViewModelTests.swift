@@ -15,6 +15,42 @@ final class PlatformViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.allInstances.count, enabledCount)
     }
 
+    /// platformNavigator (tab 行) 的数据源保序 + 完整性: 装机实测 9 实例场景
+    /// (MiniMax×2 + GLM + TokenRhythm×5 + StepFun). tab 行从横向滚动改为自动
+    /// 换行网格后, 每个账号都必须出现在数据源里且顺序与实例列表一致, 否则尾部
+    /// tab (如被挤走的 T2~T5) 仍然点不到. 禁用的实例不出现在 tab 行.
+    func testAllInstancesWithNineAccounts() {
+        let viewModel = PlatformViewModel()
+        var addedIDs: [String] = []
+        var disabledID: String?
+        defer {
+            addedIDs.forEach { PlatformInstanceStore.shared.removeInstance(id: $0) }
+            if let disabledID { PlatformInstanceStore.shared.removeInstance(id: disabledID) }
+        }
+
+        // 新实例默认禁用 (isEnabled 默认策略只认默认实例), 菜单新增路径会置启用 —
+        // 这里对齐生产路径显式启用, 否则 tab 行根本不显示它们.
+        for type in [PlatformType.minimax_cn, .minimax_cn, .glm_cn,
+                     .tokenrhythm, .tokenrhythm, .tokenrhythm, .tokenrhythm, .tokenrhythm,
+                     .stepfun] {
+            var instance = PlatformInstanceStore.shared.addInstance(of: type)
+            instance.isEnabled = true
+            addedIDs.append(instance.id)
+        }
+        // 一个未启用的实例: 必须被 allInstances 排除 (不进 tab 行)
+        disabledID = PlatformInstanceStore.shared.addInstance(of: .tokenrhythm).id
+
+        let expected = PlatformInstanceStore.shared.instances.filter(\.isEnabled)
+        let allInstances = viewModel.allInstances
+
+        XCTAssertEqual(allInstances.count, expected.count, "allInstances 应恰好覆盖全部启用实例")
+        XCTAssertEqual(allInstances.map(\.id), expected.map(\.id), "tab 顺序应与实例列表顺序一致")
+        XCTAssertTrue(Set(allInstances.map(\.id)).isSuperset(of: Set(addedIDs)),
+                      "9 个启用实例必须全部出现在 tab 数据源里")
+        XCTAssertFalse(allInstances.contains(where: { $0.id == disabledID }),
+                       "禁用的实例不应出现在 tab 数据源里")
+    }
+
     func testConfiguredInstancesReturnsArray() {
         let viewModel = PlatformViewModel()
         let instances = viewModel.allConfiguredInstances

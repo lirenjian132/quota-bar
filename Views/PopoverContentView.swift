@@ -1,26 +1,35 @@
 import SwiftUI
 
 struct PopoverContentView: View {
+    /// 弹窗宽度: 原 280 下换行网格每行只能塞 2~3 个 tab, 360 让一行容纳更多账号.
+    private static let popoverWidth: CGFloat = 360
+    /// 弹窗高度上限: 账号多 (tab 换行多行) 或内容超长时, 超出部分由外层垂直
+    /// ScrollView 滚动兜底 — 原固定 320 会把超出的 tab/内容直接裁掉.
+    private static let popoverMaxHeight: CGFloat = 560
+
     @ObservedObject var viewModel: PlatformViewModel
     @State private var showPlatformSelection = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            headerSection
+        // 高度自适应 + 上限兜底: 内容不超上限时弹窗贴合内容; 超过则由垂直滚动
+        // 兜底, 保证任何账号数量下弹窗都不超出屏幕, 所有 tab 平铺可见可点.
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 12) {
+                headerSection
 
-            if viewModel.showingConfig {
-                configSection
-            } else {
-                platformNavigator
-                platformContent
+                if viewModel.showingConfig {
+                    configSection
+                } else {
+                    platformNavigator
+                    platformContent
+                }
+
+                footerSection
             }
-
-            Spacer()
-
-            footerSection
+            .padding()
+            .frame(width: Self.popoverWidth)
         }
-        .padding()
-        .frame(width: 280, height: 320)
+        .frame(maxHeight: Self.popoverMaxHeight)
     }
 
     // MARK: - Header
@@ -50,11 +59,12 @@ struct PopoverContentView: View {
     // MARK: - Platform Navigator
 
     private var platformNavigator: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(viewModel.allInstances) { instance in
-                    platformTab(instance)
-                }
+        // 账号多时横向滚动会把尾部 tab 挤出弹窗 (无滚动条提示, 触控板横滑也不
+        // 直观, 用户发现不了更点不到 — TokenRhythm 的「重新登录」就在被挤走的
+        // tab 下), 改为自适应换行网格: tab 按 60~120pt 宽度铺成多行, 平铺可见.
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 60, maximum: 120))], spacing: 8) {
+            ForEach(viewModel.allInstances) { instance in
+                platformTab(instance)
             }
         }
     }
