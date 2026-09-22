@@ -557,4 +557,51 @@ final class PlatformViewModelTests: XCTestCase {
         // 收尾: 从 shared store 移除测试实例 (隔离 suite, 不影响真实配置).
         PlatformInstanceStore.shared.removeInstance(id: instance.id)
     }
+
+    // MARK: - R-5 「重新登录」按钮仅 unauthorized 显示
+
+    func testShowsRenewSessionButtonForUnauthorizedOnCookiePlatform() {
+        // cookie 平台 (StepFun/TokenRhythm, 会话型凭据) + unauthorized (登录过期):
+        // 唯一"重新登录能治好"的组合, 必须显示.
+        let viewModel = PlatformViewModel()
+        let instance = PlatformInstance(id: "r5-unauth-tr", platformType: .tokenrhythm, displayName: "")
+        viewModel.platformErrors[instance.id] = .unauthorized(.tokenrhythm)
+        XCTAssertTrue(viewModel.showsRenewSessionButton(for: instance))
+
+        let stepfun = PlatformInstance(id: "r5-unauth-sf", platformType: .stepfun, displayName: "")
+        viewModel.platformErrors[stepfun.id] = .unauthorized(.stepfun)
+        XCTAssertTrue(viewModel.showsRenewSessionButton(for: stepfun))
+    }
+
+    func testShowsRenewSessionButtonHiddenForNonUnauthorizedErrors() {
+        // 网络错误 / 业务错误 / 无错误: 重新登录治不好, 显示即误导 — 必须隐藏.
+        let viewModel = PlatformViewModel()
+        let instance = PlatformInstance(id: "r5-net-tr", platformType: .tokenrhythm, displayName: "")
+
+        viewModel.platformErrors[instance.id] = .networkError(.tokenrhythm, "timeout")
+        XCTAssertFalse(viewModel.showsRenewSessionButton(for: instance),
+                       "网络错误不得显示重新登录 (重登治不好)")
+
+        viewModel.platformErrors[instance.id] = .apiError(.tokenrhythm, "boom")
+        XCTAssertFalse(viewModel.showsRenewSessionButton(for: instance),
+                       "业务错误不得显示重新登录")
+
+        viewModel.platformErrors[instance.id] = .decodingError(.tokenrhythm, "bad json")
+        XCTAssertFalse(viewModel.showsRenewSessionButton(for: instance))
+
+        viewModel.platformErrors[instance.id] = nil
+        XCTAssertFalse(viewModel.showsRenewSessionButton(for: instance), "无错误不得显示")
+    }
+
+    func testShowsRenewSessionButtonHiddenForKeyPlatformEvenWhenUnauthorized() {
+        // API key 平台 (MiniMax/GLM) 没有会话可续: 即使 unauthorized 也不显示.
+        let viewModel = PlatformViewModel()
+        let minimax = PlatformInstance(id: "r5-key-mm", platformType: .minimax_cn, displayName: "")
+        viewModel.platformErrors[minimax.id] = .unauthorized(.minimax_cn)
+        XCTAssertFalse(viewModel.showsRenewSessionButton(for: minimax))
+
+        let glm = PlatformInstance(id: "r5-key-glm", platformType: .glm_cn, displayName: "")
+        viewModel.platformErrors[glm.id] = .unauthorized(.glm_cn)
+        XCTAssertFalse(viewModel.showsRenewSessionButton(for: glm))
+    }
 }

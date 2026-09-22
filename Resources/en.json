@@ -107,5 +107,12 @@
   "menu.deleteAccount.confirmOk": "Delete",
   "menu.deleteAccount.informative": "This removes the account from the menu bar and deletes its saved API key. This cannot be undone.",
   "menu.moveLeft": "Move Left",
-  "menu.moveRight": "Move Right"
+  "menu.moveRight": "Move Right",
+  "menu.renewSession": "Sign in again…",
+  "popover.renewSession": "Sign in again…",
+  "login.title": "Log in to %@",
+  "login.hint": "Finish signing in on the page (including any captcha), then tap “Complete & Extract” to automatically save your login state",
+  "login.complete": "Complete & Extract",
+  "login.missing.title": "No login credentials detected",
+  "login.missing.message": "No active session was detected. Finish signing in on the page first, then tap “Complete & Extract”."
 }

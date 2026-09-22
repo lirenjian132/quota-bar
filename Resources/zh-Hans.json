@@ -107,5 +107,12 @@
   "menu.deleteAccount.confirmOk": "删除",
   "menu.deleteAccount.informative": "将从菜单栏移除此账号，并删除其保存的 API Key。此操作不可撤销。",
   "menu.moveLeft": "左移",
-  "menu.moveRight": "右移"
+  "menu.moveRight": "右移",
+  "menu.renewSession": "重新登录…",
+  "popover.renewSession": "重新登录…",
+  "login.title": "登录 %@",
+  "login.hint": "在网页中完成登录（含验证码/滑块）后，点「完成并提取」，自动保存登录状态",
+  "login.complete": "完成并提取",
+  "login.missing.title": "未检测到登录凭据",
+  "login.missing.message": "尚未检测到登录状态，请先在网页中完成登录，再点「完成并提取」。"
 }

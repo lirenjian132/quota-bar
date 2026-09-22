@@ -125,33 +125,39 @@ final class ConfigServiceEnabledMetricsTests: XCTestCase {
     // MARK: - A4-6 拒写也发通知 (miniMax P2-7)
 
     /// 注册 .enabledMetricsChanged 观察者 (queue: nil 同步投递, 与生产
-    /// StatusBarController 的 selector 监听同语义), 返回 (expectation, 注销闭包).
-    private func observeEnabledMetricsChanged(object: Any) -> (XCTestExpectation, () -> Void) {
-        let received = expectation(description: "enabledMetricsChanged posted")
+    /// StatusBarController 的 selector 监听同语义), 返回 (计数器读取闭包, 注销闭包).
+    /// 不依赖 NotificationCenter 的 object: 匹配 — 它对 String 值类型的
+    /// AnyObject 桥接匹配行为不稳定 (曾间歇收不到), 改收全量通知在回调里
+    /// 按 instance id 做值比较, 确定性 100%. 同步投递也不需要异步等待,
+    /// post 返回时 block 已执行, 断言计数器即可.
+    private func countEnabledMetricsChanged(forInstanceID id: String) -> (() -> Int, () -> Void) {
+        let box = CountBox()
         let observer = NotificationCenter.default.addObserver(
-            forName: .enabledMetricsChanged, object: object, queue: nil
-        ) { _ in received.fulfill() }
-        return (received, { NotificationCenter.default.removeObserver(observer) })
+            forName: .enabledMetricsChanged, object: nil, queue: nil
+        ) { note in
+            if note.object as? String == id { box.value += 1 }
+        }
+        return ({ box.value }, { NotificationCenter.default.removeObserver(observer) })
+    }
+
+    private final class CountBox {
+        var value = 0
     }
 
     func testRejectedSetPostsEnabledMetricsChanged() {
         // 拒写 (空数组) 也要发通知: 监听方 (菜单刷新勾选态) 要能感知"设置被拒",
         // 否则用户看到临时勾选, 重开菜单才消失.
-        let (received, remove) = observeEnabledMetricsChanged(object: Self.minimaxInstance.id)
+        let (count, remove) = countEnabledMetricsChanged(forInstanceID: Self.minimaxInstance.id)
         defer { remove() }
         service.setEnabledMetrics([], for: Self.minimaxInstance)
-        // 通知是同步投递 (observer queue: nil), 但全量负载 (并行测试类 × 满载 CPU)
-        // 下等待线程被唤醒的延迟可能远超 1s — 13 轮全量中 flake 过 1 次.
-        // 放宽到 5s 消除负载噪声, 不改变断言语义.
-        wait(for: [received], timeout: 5)
+        XCTAssertEqual(count(), 1, "拒写应同步投递 1 次通知")
     }
 
     func testRejectedSetTooManyPostsEnabledMetricsChanged() {
         // 超上限拒写同样发通知 (object 仍是 instance id, 与成功写入一致).
-        let (received, remove) = observeEnabledMetricsChanged(object: Self.glmInstance.id)
+        let (count, remove) = countEnabledMetricsChanged(forInstanceID: Self.glmInstance.id)
         defer { remove() }
         service.setEnabledMetrics(["five_hour", "weekly_limit", "mcp_monthly"], for: Self.glmInstance)
-        // 同上: 同步投递 + 全量负载唤醒延迟, 超时放宽到 5s (F5-4 flake 修复).
-        wait(for: [received], timeout: 5)
+        XCTAssertEqual(count(), 1, "超上限拒写应同步投递 1 次通知")
     }
 }

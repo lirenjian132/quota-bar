@@ -101,6 +101,11 @@ struct PopoverContentView: View {
             }
         } else if let error = viewModel.platformErrors[instance.id] {
             errorSection(error)
+            // 一键续期入口: 错误区下方. 仅 cookie 型平台 + unauthorized (会话过期)
+            // 才显示 — 判定收在 viewModel.showsRenewSessionButton 以便单测.
+            if viewModel.showsRenewSessionButton(for: instance) {
+                renewSessionButton(instance)
+            }
         } else if viewModel.isLoading[instance.id] == true {
             loadingSection
         } else {
@@ -301,6 +306,19 @@ struct PopoverContentView: View {
     }
 
     // MARK: - Error Section
+
+    // 一键续期入口: 错误区下方, 对 cookie 型平台 (StepFun/TokenRhythm, 会话型凭据)
+    // 且错误为 unauthorized (登录过期) 时显示「重新登录」— 弹内嵌登录窗重登官网,
+    // 自动提取 cookie 写入凭据并刷新. API key 平台 (MiniMax/GLM) 无会话可续,
+    // 网络错误/业务错误重登也治不好 — 两者都不显示 (判定见
+    // PlatformViewModel.showsRenewSessionButton).
+    private func renewSessionButton(_ instance: PlatformInstance) -> some View {
+        Button(action: { viewModel.renewSession(for: instance) }) {
+            Label(I18nService.shared.translate("popover.renewSession"), systemImage: "person.crop.circle.badge.arrow.forward")
+        }
+        .buttonStyle(.borderedProminent)
+        .padding(.top, 4)
+    }
 
     private func errorSection(_ error: PlatformError) -> some View {
         VStack(alignment: .leading, spacing: 4) {

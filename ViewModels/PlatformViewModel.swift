@@ -39,12 +39,21 @@ final class PlatformViewModel: ObservableObject {
     private let platformManager: PlatformManager
     private let configService: ConfigService
     private let instanceStore: PlatformInstanceStore
+    /// 登录窗工厂: 生产默认建真窗 (LoginWindowCoordinator), 测试注入 fake.
+    typealias LoginWindowFactory = @MainActor (PlatformInstance) -> (any LoginWindowControlling)?
+    private let loginWindowFactory: LoginWindowFactory
+    /// 持有在途的登录窗防 GC (NSWindowController 没了引用窗口就关); 回调完成后置 nil.
+    private var loginWindow: (any LoginWindowControlling)?
 
-    init(platformManager: PlatformManager = .shared, configService: ConfigService = .shared, instanceStore: PlatformInstanceStore = .shared) {
+    init(platformManager: PlatformManager = .shared, configService: ConfigService = .shared, instanceStore: PlatformInstanceStore = .shared, loginWindowFactory: @escaping LoginWindowFactory = { instance in
+        guard let controller = LoginWindowCoordinator.makeController(for: instance.platformType) else { return nil }
+        return controller
+    }) {
         self.platformManager = platformManager
         self.configService = configService
         self.instanceStore = instanceStore
         self.activeInstance = configService.activeInstance
+        self.loginWindowFactory = loginWindowFactory
 
         NotificationCenter.default.addObserver(
             self,
@@ -321,7 +330,53 @@ final class PlatformViewModel: ObservableObject {
         showingAPIKey = false
     }
 
+    // MARK: - Session Renewal
+
+    /// 一键续期: 弹内嵌登录窗让用户重新登录官网, app 自动提取 cookie 写入凭据存储.
+    /// 非 cookie 型平台 (MiniMax/GLM — API key 鉴权, 没有会话可续) no-op.
+    func renewSession(for instance: PlatformInstance) {
+        guard WebLoginRenewalConfig.platform(for: instance.platformType) != nil else { return }
+        // 防双窗 (R-4): 已有在途登录窗时 no-op — 连点菜单/按钮只弹一扇.
+        // 窗口由 onComplete/onCancel 置 nil 后释放, 那之后才允许再次唤起.
+        guard loginWindow == nil else { return }
+        guard let controller = loginWindowFactory(instance) else { return }
+        controller.onComplete = { [weak self] credential in
+            guard let self else { return }
+            self.loginWindow = nil
+            self.applyRenewedCredential(credential, for: instance)
+        }
+        controller.onCancel = { [weak self] in
+            self?.loginWindow = nil
+        }
+        // 持有引用防 GC: NSWindowController 没了引用窗口就关.
+        loginWindow = controller
+        controller.present()
+    }
+
+    /// 续期成功回调: 写凭据 + 清 service usage 缓存 + 局部重新拉取.
+    /// 与 saveAPIKey 的写入侧效果对齐 (清缓存否则 300s 窗口内刷新看到的还是旧
+    /// 账号数据), 但不碰配置面板 UI 状态 — 续期不经配置面板.
+    private func applyRenewedCredential(_ credential: String, for instance: PlatformInstance) {
+        guard let platform = WebLoginRenewalConfig.platform(for: instance.platformType) else { return }
+        let store = configService.store(for: instance)
+        store.setAPIKey(WebLoginRenewalConfig.storageCredential(from: credential, platform: platform))
+        platformManager.clearCache(for: instance)
+        fetchUsage(for: instance)
+    }
+
     // MARK: - Computed
+
+    /// 错误区是否显示「重新登录」按钮 (R-5).
+    ///
+    /// 两个条件同时满足才显示:
+    ///   1. cookie 型平台 (API key 型平台没有会话可续);
+    ///   2. 当前错误是 unauthorized (会话过期) — 唯一"重新登录能治好"的错误.
+    /// 网络错误 / 业务错误显示续期按钮是误导: 重登解决不了, 用户点了更懵.
+    func showsRenewSessionButton(for instance: PlatformInstance) -> Bool {
+        guard WebLoginRenewalConfig.platform(for: instance.platformType) != nil else { return false }
+        guard case .unauthorized = platformErrors[instance.id] else { return false }
+        return true
+    }
 
     var activePlatformData: PlatformUsageData? {
         platformData[activeInstance.id]

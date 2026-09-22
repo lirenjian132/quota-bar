@@ -251,6 +251,19 @@ class StatusBarController {
             renameItem.representedObject = instance.id
             platSubmenu.addItem(renameItem)
 
+            // 一键续期: 仅 cookie 型平台 (StepFun/TokenRhythm) 有会话可续;
+            // API key 平台 (MiniMax/GLM) 不显示 — 它们的凭据不过期, 只会失效/抄错.
+            if WebLoginRenewalConfig.platform(for: instance.platformType) != nil {
+                let renewItem = NSMenuItem(
+                    title: I18nService.shared.translate("menu.renewSession"),
+                    action: #selector(renewSessionAction(_:)),
+                    keyEquivalent: ""
+                )
+                renewItem.target = self
+                renewItem.representedObject = instance.id
+                platSubmenu.addItem(renewItem)
+            }
+
             let deleteItem = NSMenuItem(
                 title: I18nService.shared.translate("menu.deleteAccount"),
                 action: #selector(deleteAccountAction(_:)),
@@ -456,6 +469,13 @@ class StatusBarController {
         if alert.runModal() == .alertFirstButtonReturn {
             viewModel.renameInstance(instance, to: field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
         }
+    }
+
+    // 一键续期: 弹内嵌登录窗重新登录官网, 自动提取 cookie 写入凭据并刷新数据.
+    @objc private func renewSessionAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let instance = PlatformInstanceStore.shared.instance(id: id) else { return }
+        viewModel.renewSession(for: instance)
     }
 
     @objc private func deleteAccountAction(_ sender: NSMenuItem) {
