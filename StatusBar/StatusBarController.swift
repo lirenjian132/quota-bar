@@ -294,14 +294,9 @@ class StatusBarController {
         for instance in PlatformInstanceStore.shared.instances {
             let platSub = NSMenu()
             let current = ConfigService.shared.enabledMetrics(for: instance)
-            // 可勾选指标按平台区分: 套餐型平台共用 3 项, 余额型 (TokenRhythm) 只有 balance.
-            let availableLabels: [String]
-            switch instance.platformType {
-            case .minimax_cn, .glm_cn:
-                availableLabels = ["five_hour", "weekly_limit", "mcp_monthly"]
-            case .tokenrhythm:
-                availableLabels = ["balance"]
-            }
+            // 可勾选清单 + 读写过滤统一收口在 ConfigService (A4-3): 读取时剔除
+            // 死 label, 写入时拒绝清单外 label, 与 getter 同一份清单.
+            let availableLabels = ConfigService.availableMetricLabels(for: instance.platformType)
             for label in availableLabels {
                 let item = NSMenuItem(
                     title: I18nService.shared.translate("menu.metric.\(label)"),
@@ -515,11 +510,14 @@ class StatusBarController {
         ConfigService.shared.setEnabledMetrics(current, for: instance)
         // 通知已由 setter 发, 无需再手动 post.
         // 同步更新菜单项状态 (因为菜单已弹出, 不会重新构造).
-        let atLimit = current.count >= 2
+        // setEnabledMetrics 对长度 > 2 的数组静默拒绝不落盘 — 必须按落盘后的
+        // 实际返回值刷新, 否则用户看到"临时勾选", 重开菜单却消失 (R3-6).
+        let persisted = ConfigService.shared.enabledMetrics(for: instance)
+        let atLimit = persisted.count >= 2
         for item in sender.menu?.items ?? [] {
             guard let p = item.representedObject as? [String: Any],
                   let l = p["label"] as? String else { continue }
-            let isCurrent = current.contains(l)
+            let isCurrent = persisted.contains(l)
             item.state = isCurrent ? .on : .off
             item.isEnabled = !(atLimit && !isCurrent)
         }

@@ -30,7 +30,6 @@ struct TokenRhythmExpiringData: Codable {
 }
 
 struct TokenRhythmExpiringSummary: Codable {
-    let expiringBalanceCny: String?
     let nextExpiryAt: String?
 }
 
@@ -141,7 +140,15 @@ final class TokenRhythmPlatformAPIService: PlatformAPIService {
 
     // 查最早到期时间. 非致命增强: 接口失败/字段缺失返回 nil, 余额显示不受影响.
     private func nextExpiryDate(from config: PlatformConfigData, network: NetworkService) async -> Date? {
-        guard let url = URL(string: config.apiBaseURL.replacingOccurrences(of: "/wallet/summary", with: "/wallet/expiring-credits")) else {
+        // apiBaseURL 是 wallet/summary 全址, 换成同 service 的 expiring-credits.
+        let expiringURLString = config.apiBaseURL.replacingOccurrences(
+            of: "/wallet/summary",
+            with: "/wallet/expiring-credits"
+        )
+        // 替换是 no-op (base 不含 /wallet/summary) 时 URL 与主请求相同: 再打一趟
+        // 同样的 summary 没意义, 直接放弃到期信息 (降级为纯余额显示).
+        guard expiringURLString != config.apiBaseURL,
+              let url = URL(string: expiringURLString) else {
             return nil
         }
         var request = URLRequest(url: url)
@@ -160,7 +167,22 @@ final class TokenRhythmPlatformAPIService: PlatformAPIService {
             return nil
         }
         guard let iso = decoded.data?.summary?.nextExpiryAt else { return nil }
-        return ISO8601DateFormatter().date(from: iso)
+        return Self.parseISO8601(iso)
+    }
+
+    /// 解析上游 ISO8601 时间串. 实测原文带毫秒 ("2026-09-26T15:20:56.281Z"):
+    /// ISO8601DateFormatter 默认的 .withInternetDateTime 解毫秒串返回 nil,
+    /// 曾导致到期时间恒 nil、7 天黄/3 天红警示全链失效.
+    /// 先试带毫秒格式, 再回退无毫秒格式, 两种形态都接.
+    static func parseISO8601(_ string: String) -> Date? {
+        let withFractionalSeconds = ISO8601DateFormatter()
+        withFractionalSeconds.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFractionalSeconds.date(from: string) {
+            return date
+        }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: string)
     }
 
     private func isExpiringSoon(_ date: Date?, withinDays days: Double) -> Bool {

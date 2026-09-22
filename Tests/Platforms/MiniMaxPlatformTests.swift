@@ -364,6 +364,10 @@ final class MiniMaxPlatformTests: XCTestCase {
         XCTAssertEqual(result.metrics.count, 2)
         XCTAssertEqual(result.metrics[0].label, "five_hour")
         XCTAssertEqual(result.metrics[1].label, "weekly_limit_unlimited")
+        // 渲染输入契约 (F5-1): unit="unlimited" + totalValue=nil 驱动弹窗 "∞" 分支
+        // (落进绝对值分支会显示 "0 unlimited"), 与姊妹测试对称钉住.
+        XCTAssertNil(result.metrics[1].totalValue)
+        XCTAssertEqual(result.metrics[1].unit, "unlimited")
     }
 
     func testFetchUsageReturnsUnlimitedWeeklyWhenStatusIsNotOne() async throws {
@@ -399,5 +403,80 @@ final class MiniMaxPlatformTests: XCTestCase {
         XCTAssertNil(result.metrics[1].totalValue)
         XCTAssertEqual(result.metrics[1].unit, "unlimited")
         XCTAssertNil(result.metrics[1].resetTime)
+    }
+
+    func testBoostedWeeklyVisibleViaEnabledMetricsEndToEnd() async throws {
+        // R3-2 端到端: 加成套餐 (weekly_boost_permille=1500) 产 weekly_limit_boosted —
+        // 菜单清单必须含它, 用户勾选后 visibleMetrics 精确匹配必须非空.
+        // 修复前 minimax_cn 清单只有 [five_hour, weekly_limit, mcp_monthly]:
+        // 加成/无限套餐用户勾"周额度"被过滤 → 状态栏 "--".
+        let json = """
+        {
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_remaining_percent": 80.0,
+                "current_weekly_remaining_percent": 50.0,
+                "current_weekly_status": 1,
+                "weekly_boost_permille": 1500
+            }]
+        }
+        """
+        service.clearCache()
+        mockNetwork.mockData = json.data(using: .utf8)
+        mockNetwork.mockResponse = MockNetworkService.makeResponse(url: "https://test.com", statusCode: 200)
+
+        let config = PlatformConfigData(
+            platformType: .minimax_cn,
+            apiBaseURL: "https://test.com",
+            authHeader: "Authorization",
+            authPrefix: "Bearer ",
+            apiKey: "test-key"
+        )
+
+        let result = try await service.fetchUsage(config: config, network: mockNetwork)
+        XCTAssertEqual(result.metrics[1].label, "weekly_limit_boosted")
+
+        // 菜单清单含 boosted, 勾选后可见 (精确匹配非空).
+        XCTAssertTrue(
+            ConfigService.availableMetricLabels(for: .minimax_cn).contains("weekly_limit_boosted")
+        )
+        let visible = StatusBarViewHelper.visibleMetrics(from: result.metrics, enabledLabels: ["weekly_limit_boosted"])
+        XCTAssertEqual(visible.map(\.label), ["weekly_limit_boosted"])
+    }
+
+    func testUnlimitedWeeklyVisibleViaEnabledMetricsEndToEnd() async throws {
+        // R3-2 端到端 (对称): 无限套餐产 weekly_limit_unlimited, 勾选后可见.
+        let json = """
+        {
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_remaining_percent": 80.0,
+                "current_weekly_remaining_percent": 50.0,
+                "current_weekly_status": 3
+            }]
+        }
+        """
+        service.clearCache()
+        mockNetwork.mockData = json.data(using: .utf8)
+        mockNetwork.mockResponse = MockNetworkService.makeResponse(url: "https://test.com", statusCode: 200)
+
+        let config = PlatformConfigData(
+            platformType: .minimax_cn,
+            apiBaseURL: "https://test.com",
+            authHeader: "Authorization",
+            authPrefix: "Bearer ",
+            apiKey: "test-key"
+        )
+
+        let result = try await service.fetchUsage(config: config, network: mockNetwork)
+        XCTAssertEqual(result.metrics[1].label, "weekly_limit_unlimited")
+
+        XCTAssertTrue(
+            ConfigService.availableMetricLabels(for: .minimax_cn).contains("weekly_limit_unlimited")
+        )
+        let visible = StatusBarViewHelper.visibleMetrics(from: result.metrics, enabledLabels: ["weekly_limit_unlimited"])
+        XCTAssertEqual(visible.map(\.label), ["weekly_limit_unlimited"])
+        // 无限套餐渲染 ∞, 不缺 total 也不崩.
+        XCTAssertEqual(StatusBarViewHelper.formatMetricText(visible[0], displayMode: .remaining), "∞")
     }
 }

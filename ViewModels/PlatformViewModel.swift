@@ -32,6 +32,10 @@ final class PlatformViewModel: ObservableObject {
 
     private var timer: Timer?
     private var fetchTask: Task<Void, Never>?
+    /// 每实例在途的 fetchUsage 任务. 换 key / 手动刷新 / 删除实例 / 全量刷新时
+    /// 取消在途任务, 避免旧响应完成后把旧账号数据写回来.
+    /// internal (非 private): 单测要钉住"删除/全量刷新时字典项被取消"这条回归.
+    var fetchTasks: [String: Task<Void, Never>] = [:]
     private let platformManager: PlatformManager
     private let configService: ConfigService
     private let instanceStore: PlatformInstanceStore
@@ -69,6 +73,9 @@ final class PlatformViewModel: ObservableObject {
         platformData.removeValue(forKey: id)
         platformErrors.removeValue(forKey: id)
         isLoading.removeValue(forKey: id)
+        // 删除实例时把它在途的 fetch 一并取消: 不取消的话, 最长 300s 后旧账号的
+        // 响应到达, platformData 会被写回 — "已删除的账号"在状态栏复活 (R3-1).
+        fetchTasks.removeValue(forKey: id)?.cancel()
         // 若删的是当前激活实例, 切到第一个可用实例 (enabled observer 会再校验一次)
         if activeInstance.id == id {
             if let first = configService.allEnabledInstances.first {
@@ -125,20 +132,41 @@ final class PlatformViewModel: ObservableObject {
 
     func fetchAllUsage() async {
         fetchTask?.cancel()
+        // 全量刷新替代局部刷新: 取消所有 per-instance 在途任务, 防止局部 fetch
+        // 的旧响应覆写全量结果 (竞态方向: fetchUsage 在途 → fetchAllUsage 启动).
+        fetchTasks.values.forEach { $0.cancel() }
         fetchTask = Task {
-            // 先标记所有已配置实例为加载中
-            for instance in platformManager.configuredInstances() {
+            // 只标记"实际会请求"的实例 (已启用且已配置). 已配置但禁用的实例被
+            // PlatformManager 跳过不发请求, 标了 loading 也没人写回清除 — 永久
+            // 转圈 (A4-4). 名单即写回循环的目标集, 取消时也靠它清场.
+            let targets = platformManager.configuredInstances().filter(\.isEnabled)
+            for instance in targets {
                 isLoading[instance.id] = true
             }
 
             let results = await platformManager.fetchAllUsage()
 
-            // 被新的 fetchAllUsage 取消时丢弃结果, 避免覆盖更新的数据
-            // (PlatformManager 的 TaskGroup 不检查 cancellation, 网络请求会跑完,
-            //  但结果不再写回, 防止定时刷新和手动刷新撞车时旧数据盖新数据)
-            if Task.isCancelled { return }
+            // 被新的 fetchAllUsage / saveAPIKey 换 key 取消时丢弃结果, 避免覆盖
+            // 更新的数据 (A4-1, 竞态方向: fetchAllUsage 在途 → saveAPIKey 启动).
+            // 旧 key 的全量结果若落地, 会把刚换的新 key 数据 (如 999) 覆写回旧值
+            // (100), 且旧值还会随响应写进 service 缓存 (生产环境请求随任务取消
+            // 中止, 到不了 cache.write). 取消也清 loading, 否则本轮标记的实例
+            // 永久转圈 (A4-4).
+            if Task.isCancelled {
+                for instance in targets {
+                    isLoading[instance.id] = false
+                }
+                return
+            }
 
             for (instanceID, result) in results {
+                // 逐项检查取消 (A4-1): 不含循环外一次的总检查兜不住"循环中途又来
+                // 一个新全量/换 key"的窗口 — 对每项写 platformData 前都查一次.
+                if Task.isCancelled { break }
+                // 实例在途期间可能被删除 (用户从菜单删账号): store 里已不存在时
+                // 丢弃结果, 防止"已删除的账号"数据复活 (R3-1, 与 onPlatformInstanceRemoved
+                // 的取消在途任务互补 — 那条覆盖 fetchUsage 路径, 这条覆盖本路径).
+                guard instanceStore.instance(id: instanceID) != nil else { continue }
                 switch result {
                 case .success(let data):
                     platformData[instanceID] = data
@@ -161,12 +189,30 @@ final class PlatformViewModel: ObservableObject {
     }
 
     func fetchUsage(for instance: PlatformInstance) {
-        isLoading[instance.id] = true
         platformErrors[instance.id] = nil
 
-        Task {
+        // 取消该实例在途的旧 fetch (典型: saveAPIKey 换 key 后立刻重新拉取):
+        // 旧请求用的是旧 key, 不清缓存 + 不取消的话, 旧响应仍会写回数据,
+        // 最长 300s (service 缓存窗口) 显示的是旧账号.
+        fetchTasks[instance.id]?.cancel()
+
+        isLoading[instance.id] = true
+
+        // 任务完成后不必清字典: 对已结束的 Task 再 cancel 是 no-op,
+        // 字典规模以实例数为上界. (若清字典需防"旧任务尾段清掉新任务引用"的竞态, 不值当)
+        fetchTasks[instance.id] = Task {
+            // 退出即清 loading (A4-4): 旧代码在 do/catch 的 Task.isCancelled 分支
+            // 提前 return, 尾段又有一道 isCancelled 守卫 — 取消路径两条出口都不清,
+            // flag 永久残留 true, 弹窗一直转圈. defer 覆盖成功/失败/取消所有路径.
+            // 已知取舍: 被新 fetch 取代的旧任务尾段可能清掉新任务的 flag (新任务
+            // 完成时最终仍置 false, 只多一次转圈闪烁) — 换 permanent spinner 值得.
+            defer { isLoading[instance.id] = false }
             do {
                 let data = try await platformManager.fetchUsage(for: instance)
+                // 被同实例的新 fetch 取消时丢弃结果, 避免旧数据盖新数据
+                // (与 fetchAllUsage 的既有模式一致; PlatformManager 内的请求不会被
+                //  取消中断, 但结果不再写回).
+                if Task.isCancelled { return }
                 platformData[instance.id] = data
                 platformErrors[instance.id] = nil
 
@@ -175,13 +221,13 @@ final class PlatformViewModel: ObservableObject {
                 }
                 delegate?.platformViewModel(self, didUpdateAllData: platformData)
             } catch {
+                if Task.isCancelled { return }
                 if let platformError = error as? PlatformError {
                     platformErrors[instance.id] = platformError
                 } else {
                     platformErrors[instance.id] = .networkError(instance.platformType, error.localizedDescription)
                 }
             }
-            isLoading[instance.id] = false
         }
     }
 
@@ -241,6 +287,15 @@ final class PlatformViewModel: ObservableObject {
         guard !trimmedKey.isEmpty else { return }
         store.setAPIKey(trimmedKey)
         store.setRegion(regionInput)
+        // 反向竞态 (A4-1, DeepSeek 探针 F1/F2): fetchAllUsage 在途 (旧 key) 时换 key,
+        // 旧 key 的全量结果后到会把新 key 数据覆写回旧账号, 旧值还会写进 service
+        // 缓存持续显示. 先取消全量任务 (fetchUsage 内的 per-instance 取消只覆盖
+        // "局部在途→全量启动"方向), 再清缓存 + 起局部 fetch.
+        fetchTask?.cancel()
+        // 换 key 后 service 内的 usage 缓存还是旧账号数据 (缓存窗口 300s):
+        // 不清则接下来 5 分钟内拉取到的仍是旧 key 的结果. 新 key 要让随后的
+        // fetchUsage 真正发请求 — 新 key 无效时应立刻报错而不是显示旧账号的余量.
+        platformManager.clearCache(for: instance)
 
         showingConfig = false
         configInstance = nil
@@ -300,6 +355,7 @@ final class PlatformViewModel: ObservableObject {
 
     func cleanup() {
         fetchTask?.cancel()
+        fetchTasks.values.forEach { $0.cancel() }
         stopAutoRefresh()
     }
 }

@@ -24,6 +24,7 @@ final class PlatformManager {
              case .minimax_cn: return MiniMaxPlatformAPIService()
              case .glm_cn: return GLMPlatformAPIService()
              case .tokenrhythm: return TokenRhythmPlatformAPIService()
+             case .stepfun: return StepFunPlatformAPIService()
              }
          }) {
         self.networkService = networkService

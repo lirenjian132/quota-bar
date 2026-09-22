@@ -115,7 +115,7 @@ final class MiniMaxPlatformAPIService: PlatformAPIService {
             weeklyResetTime = nil
         }
 
-        // 剩余 >= 15% 视为健康 (UI 显示"正常" + 绿色), 低于 15% 触发"偏低"红色提示
+        // 剩余 >= 15% 视为健康 (UI 显示"正常" + 绿色), 低于 15% 触发"状态异常"红色提示
         let isHealthy = dailyRemainingPct >= 15.0
 
         // 5 小时窗口永远存在

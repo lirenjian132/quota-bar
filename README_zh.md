@@ -9,13 +9,13 @@
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Version](https://img.shields.io/github/v/release/nmsn/quota-bar)
 ![Downloads](https://img.shields.io/github/downloads/nmsn/quota-bar/total)
-[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen)](CONTRIBUTING.md)
+**PRs welcome**
 
-macOS 菜单栏应用，支持多平台 API 使用量查看（MiniMax、GLM、DeepSeek、Kimi）。
+macOS 菜单栏应用，支持多平台 API 使用量查看（MiniMax、GLM、基元律动 TokenRhythm、Stepfun）。
 
 ## 功能
 
-- 多平台支持：MiniMax、GLM、DeepSeek、Kimi
+- 多平台支持：MiniMax、GLM、基元律动（TokenRhythm）、Stepfun
 - 实时显示日/周使用量百分比
 - 动态图标颜色指示使用状态
   - 绿色：剩余 ≥ 50%
@@ -23,7 +23,7 @@ macOS 菜单栏应用，支持多平台 API 使用量查看（MiniMax、GLM、De
   - 红色：剩余 < 10%
 - 左键点击打开详情 popover
 - 右键菜单快速操作
-- 每个平台可选择最多 2 个指标显示（5 小时额度 / 周额度 / MCP 月度），通过右键菜单配置；菜单栏字号自动适配
+- 每个平台可选择最多 2 个指标显示（5 小时额度 / 周额度 / 周额度加成 / 无限 / MCP 月度 / 余额 / 套餐 Credits），通过右键菜单配置；菜单栏字号自动适配
 - API Token 配置与管理
 - Sparkle 自动更新支持
 
@@ -51,7 +51,7 @@ macOS 菜单栏应用，支持多平台 API 使用量查看（MiniMax、GLM、De
 
 1. 首次打开后，点击菜单栏图标
 2. 在弹出窗口中点击右上角按钮配置 API Token
-3. 选择平台并粘贴 Token
+3. 选择平台并粘贴其 API Key（TokenRhythm/Stepfun 为登录会话 cookie）
 4. 菜单栏将实时显示使用量
 
 ## License

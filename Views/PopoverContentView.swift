@@ -141,7 +141,13 @@ struct PopoverContentView: View {
                 .font(.caption.bold())
 
             HStack {
-                if metric.unit == "%" {
+                if metric.unit == "unlimited" {
+                    // 无限套餐 (MiniMax weekly_limit_unlimited: totalValue=nil,
+                    // currentValue=0): 与状态栏 formatMetricText 同口径显示 ∞,
+                    // 不能落进下面的绝对值分支渲染出 "0 unlimited" (F5-1).
+                    Text("∞")
+                        .font(.caption)
+                } else if metric.unit == "%" {
                     Text("\(I18nService.shared.translate("popover.remaining")): \(Int(metric.currentValue))%")
                         .font(.caption)
                 } else if let total = metric.totalValue, total > 0 {
@@ -172,8 +178,10 @@ struct PopoverContentView: View {
         switch metric.label {
         case "five_hour": return "clock"
         case "weekly_limit": return "calendar"
+        case "weekly_limit_unlimited": return "calendar"  // 无限套餐, 与 weekly_limit 同图标
         case "weekly_limit_boosted": return "calendar.badge.plus"  // 加成额度, 带 + 标识
         case "mcp_monthly": return "wrench.and.screwdriver"  // MCP 月度调用次数
+        case "credits": return "bolt.fill"  // Stepfun 套餐月 credits 余量
         default: return "dollarsign.circle"  // 货币余额
         }
     }
@@ -182,6 +190,7 @@ struct PopoverContentView: View {
         switch metric.label {
         case "five_hour": return .orange
         case "weekly_limit": return .blue
+        case "weekly_limit_unlimited": return .blue  // 无限套餐, 与 weekly_limit 同色
         case "weekly_limit_boosted": return .purple  // 加成额度, 紫色区分
         case "mcp_monthly": return .purple  // MCP 月度
         default: return .green  // 货币余额
@@ -251,15 +260,19 @@ struct PopoverContentView: View {
 
     // TokenRhythm 的凭据不是 API key 而是 tr_session 会话值, 文案分开以免误导.
     private var configTitleKey: String {
-        viewModel.configInstance?.platformType == .tokenrhythm
-            ? "popover.configurePlatform.tokenrhythm"
-            : "popover.configurePlatform"
+        switch viewModel.configInstance?.platformType {
+        case .tokenrhythm: return "popover.configurePlatform.tokenrhythm"
+        case .stepfun: return "popover.configurePlatform.stepfun"
+        default: return "popover.configurePlatform"
+        }
     }
 
     private var configPlaceholderKey: String {
-        viewModel.configInstance?.platformType == .tokenrhythm
-            ? "popover.inputPlaceholder.tokenrhythm"
-            : "popover.inputPlaceholder"
+        switch viewModel.configInstance?.platformType {
+        case .tokenrhythm: return "popover.inputPlaceholder.tokenrhythm"
+        case .stepfun: return "popover.inputPlaceholder.stepfun"
+        default: return "popover.inputPlaceholder"
+        }
     }
 
     // 保存按钮是否可用: 填了 API Key 即可

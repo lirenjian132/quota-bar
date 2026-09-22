@@ -32,9 +32,11 @@ git pull origin main
 # 创建版本更新分支
 git checkout -b chore/bump-version-X.Y.Z
 
-# 更新版本号 (在 project.pbxproj 中)
+# 更新版本号 (XcodeGen 工程, 源头是 project.yml)
 # MARKETING_VERSION: X.Y.Z (显示版本)
 # CURRENT_PROJECT_VERSION: N (构建版本，每次 +1)
+# 流程: 改 project.yml → xcodegen generate → 同步 scripts/package-dmg.sh 的 MARKETING_VERSION
+# (package-dmg.sh 里是硬编码副本, 漏同步会打出旧版本号的 DMG 文件名)
 
 # 提交并推送
 git add -A
@@ -83,8 +85,8 @@ gh release create vX.Y.Z \
 ### 6. 构建 Release 版本
 
 ```bash
-xcodebuild -project minimax-bar.xcodeproj \
-  -scheme minimax-bar \
+xcodebuild -project quota-bar.xcodeproj \
+  -scheme quota-bar \
   -configuration Release \
   build
 ```
@@ -107,7 +109,7 @@ xcodebuild -project minimax-bar.xcodeproj \
 ### 8. 上传 DMG 到 Release
 
 ```bash
-gh release upload vX.Y.Z QuotaBar-X.Y.Z.dmg --clobber
+gh release upload vX.Y.Z dist/QuotaBar-X.Y.Z.dmg --clobber
 ```
 
 ### 9. Update appcast (gh-pages)
@@ -159,7 +161,7 @@ gh release view vX.Y.Z --json assets --jq '.assets'
 Xcode build 产物在 DerivedData 中，使用完整路径：
 
 ```bash
-APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData/minimax-bar-*/Build/Products/Release -name "QuotaBar.app" -type d | head -1)
+APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData/quota-bar-*/Build/Products/Release -name "QuotaBar.app" -type d | head -1)
 hdiutil create -volname QuotaBar -srcfolder "$APP_PATH" -ov -format UDZO -o QuotaBar-X.Y.Z.dmg
 ```
 

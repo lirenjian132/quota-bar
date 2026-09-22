@@ -9,13 +9,13 @@ English | [中文](./README_zh.md)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Version](https://img.shields.io/github/v/release/nmsn/quota-bar)
 ![Downloads](https://img.shields.io/github/downloads/nmsn/quota-bar/total)
-[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen)](CONTRIBUTING.md)
+**PRs welcome**
 
-A macOS menu bar app for viewing multiple AI platform API usage (MiniMax, GLM, DeepSeek, Kimi).
+A macOS menu bar app for viewing multiple AI platform API usage (MiniMax, GLM, TokenRhythm, Stepfun).
 
 ## Features
 
-- Multi-platform support: MiniMax, GLM, DeepSeek, Kimi
+- Multi-platform support: MiniMax, GLM, TokenRhythm (基元律动), Stepfun
 - Real-time daily/weekly usage percentage in menu bar
 - Dynamic icon color indicating usage status
   - Green: remaining ≥ 50%
@@ -23,7 +23,7 @@ A macOS menu bar app for viewing multiple AI platform API usage (MiniMax, GLM, D
   - Red: remaining < 10%
 - Left-click to open details popover
 - Right-click context menu for quick actions
-- Selectable metrics per platform: choose up to 2 of 5-hour / weekly / MCP via right-click menu; menu bar adapts font size automatically
+- Selectable metrics per platform: choose up to 2 of 5-hour / weekly / boosted weekly / unlimited / MCP monthly / balance / plan credits via right-click menu; menu bar adapts font size automatically
 - API Token configuration and management
 - Sparkle auto-update support
 
@@ -51,7 +51,7 @@ A macOS menu bar app for viewing multiple AI platform API usage (MiniMax, GLM, D
 
 1. Click the menu bar icon after launching
 2. Click the button in the top-right corner to configure API Token
-3. Select a platform and paste the Token
+3. Select a platform and paste its API key (or login-session cookie for TokenRhythm/Stepfun)
 4. The menu bar will display usage statistics in real-time
 
 ## License

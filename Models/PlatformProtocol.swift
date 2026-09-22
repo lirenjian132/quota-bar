@@ -4,12 +4,14 @@ enum PlatformType: String, Codable, CaseIterable, Hashable {
     case minimax_cn
     case glm_cn
     case tokenrhythm
+    case stepfun
 
     var displayName: String {
         switch self {
         case .minimax_cn: return "MiniMax"
         case .glm_cn: return "GLM"
         case .tokenrhythm: return "基元律动"
+        case .stepfun: return "Stepfun"
         }
     }
 }
@@ -32,8 +34,15 @@ extension PlatformError: LocalizedError {
             return I18nService.shared.translate("error.invalidResponse")
         case .networkError(_, let message):
             return String(format: I18nService.shared.translate("error.networkError"), message)
-        case .unauthorized:
-            return I18nService.shared.translate("error.unauthorized")
+        case .unauthorized(let platform):
+            // 按凭据类型分派文案: cookie 型平台 (网页登录会话) 过期要重新登录粘贴;
+            // API key 型平台是 key 本身认证失败, 让用户"重新登录"词不达.
+            switch platform {
+            case .tokenrhythm, .stepfun:
+                return I18nService.shared.translate("error.unauthorized.session")
+            case .minimax_cn, .glm_cn:
+                return I18nService.shared.translate("error.unauthorized.key")
+            }
         case .decodingError(_, let message):
             return String(format: I18nService.shared.translate("error.decodingError"), message)
         case .apiError(_, let message):

@@ -144,10 +144,20 @@ final class ConfigService {
         defaults.set(refreshIntervalRaw, forKey: "quotabar.refreshInterval")
     }
 
-    /// 清理已从 PlatformType 删除的平台的残留 UserDefaults 配置 (含老版本明文 api_key).
+    /// 只清已删除平台的残留 UserDefaults 配置 (含老版本明文 api_key).
     /// 这些 key 是历史版本写入的, enum 里已无对应 case, 留着是无害的死数据, 顺手清掉.
+    ///
+    /// 只清已删除平台的残留; 现役平台即使曾在这个列表里也不在此清 (stepfun 曾被删过
+    /// 又加回): 老用户的老配置由 PlatformInstanceStore.migrateLegacyPerTypeConfig
+    /// 接管 (生成默认禁用实例 + 搬 key). ConfigService.init 的清理早于 instanceStore
+    /// 的迁移 (AppDelegate 先建 PlatformViewModel → 先触达 ConfigService.shared),
+    /// 先清会让 2.0.x 直升级用户的老 stepfun 配置搬不到.
+    /// 注意只清 quotabar.platform.* 前缀, 不影响当前实例 quotabar.instance.* 前缀的配置.
+    /// internal (非 private): 单测要钉住"现役平台不在清理列表"这条回归 (P1-5).
+    static let cleanedLegacyPlatforms = ["minimax_en", "glm_en", "kimi", "deepseek", "mimo"]
+
     private func cleanupLegacyPlatformKeys() {
-        for legacy in ["minimax_en", "glm_en", "kimi", "deepseek", "mimo", "stepfun"] {
+        for legacy in Self.cleanedLegacyPlatforms {
             let prefix = "quotabar.platform.\(legacy)"
             defaults.removeObject(forKey: prefix)
             defaults.removeObject(forKey: "\(prefix).enabled")
@@ -158,8 +168,36 @@ final class ConfigService {
 
     // MARK: - Enabled Metrics
 
+    /// 右键菜单「显示指标」里每个平台可勾选的 metric label (A4-3: 从 StatusBarController 上移).
+    /// 清单必须与该平台 service 实际产出的 label 对齐 (R3-2): "服务可产出但不可勾"
+    /// 的项会被 visibleMetrics 过滤掉, 用户状态栏恒显 "--". 同族匹配见
+    /// StatusBarViewHelper (周额度三态在族内互相替代).
+    /// 勾选数量上限 (2) 由菜单构造处的 atLimit 逻辑控制, 这里只列全集.
+    /// static 纯查表: 单测无需 MainActor 即可验证 (P0-1 回归钉住).
+    static func availableMetricLabels(for type: PlatformType) -> [String] {
+        switch type {
+        case .minimax_cn:
+            // MiniMax: 5 小时窗口 + 周限额三态 (标准 / 加成 / 无限). 不产 mcp_monthly.
+            return ["five_hour", "weekly_limit", "weekly_limit_boosted", "weekly_limit_unlimited"]
+        case .glm_cn:
+            // GLM: 5 小时 + 周限额 + MCP 月度次数. 无 boosted/unlimited 态.
+            return ["five_hour", "weekly_limit", "mcp_monthly"]
+        case .tokenrhythm:
+            return ["balance"]
+        case .stepfun:
+            // credits 是 credit 套餐主指标 (defaultEnabledMetrics 只勾它);
+            // 非 credit 套餐族降级产出 five_hour/weekly_limit (见 StepFunPlatformService),
+            // 这里必须一并列出 — 否则降级用户状态栏恒显 "--" 且右键菜单无可选项.
+            return ["credits", "five_hour", "weekly_limit"]
+        }
+    }
+
     /// 每个账号实例用户勾选要在菜单栏显示的 metric label 列表. 顺序即显示顺序.
     /// getter 优先读 UserDefaults, 无值时返回平台默认值 (首次安装 / 老用户升级).
+    /// 死 label 过滤 (A4-3): 老版本落盘的 enabledMetrics 可能含已下架 label (如
+    /// minimax 的 mcp_monthly), 不过滤会占满 2 个勾选名额、菜单其余项全灰、
+    /// 且与产出永无交集被 prefix(2) 防呆掩盖, 用户无法清理. 全部 label 均已
+    /// 下架时回退平台默认值.
     func enabledMetrics(for instance: PlatformInstance) -> [String] {
         configLock.lock()
         defer { configLock.unlock() }
@@ -168,7 +206,9 @@ final class ConfigService {
            let data = raw.data(using: .utf8),
            let labels = try? JSONDecoder().decode([String].self, from: data),
            !labels.isEmpty, labels.count <= 2 {
-            return labels
+            let allowed = Self.availableMetricLabels(for: instance.platformType)
+            let filtered = labels.filter { allowed.contains($0) }
+            if !filtered.isEmpty { return filtered }
         }
         return Self.defaultEnabledMetrics(for: instance.platformType)
     }
@@ -182,22 +222,42 @@ final class ConfigService {
             return ["five_hour", "weekly_limit"]
         case .tokenrhythm:
             return ["balance"]
+        case .stepfun:
+            return ["credits"]
         }
     }
 
     /// 设置实例启用的 metric label 列表. 拒绝空数组 (保留旧值) 和长度 > 2 的数组.
-    /// 写入成功时发 `.enabledMetricsChanged` 通知.
+    /// 写入成功时发 `.enabledMetricsChanged` 通知; 被拒时也发 (A4-6) — 监听方
+    /// (菜单据此刷新勾选态/防幻觉勾选, 状态栏据此重绘) 要能感知"设置被拒".
+    /// 死 label 过滤 (A4-3): 不在 availableMetricLabels 清单内的 label 静默丢弃,
+    /// 过滤后为空的写入视为拒绝 (不落盘).
     func setEnabledMetrics(_ labels: [String], for instance: PlatformInstance) {
-        guard !labels.isEmpty, labels.count <= 2 else { return }
+        // 原始名单先过空/上限检查 (R3-6 契约不变: 3 个 label 一律拒, 不因 sanitize 缩水).
+        if rejectIfInvalid(labels, for: instance) { return }
+        // 死 label 过滤 (A4-3): 不在 availableMetricLabels 清单内的 label 静默丢弃.
+        let allowed = Self.availableMetricLabels(for: instance.platformType)
+        let sanitized = labels.filter { allowed.contains($0) }
+        // 过滤后为空 (全是死 label) 同样视为拒绝.
+        if rejectIfInvalid(sanitized, for: instance) { return }
 
         configLock.lock()
         let key = "quotabar.instance.\(instance.id).enabledMetrics"
-        let encoded = (try? JSONEncoder().encode(labels)).flatMap { String(data: $0, encoding: .utf8) }
+        let encoded = (try? JSONEncoder().encode(sanitized)).flatMap { String(data: $0, encoding: .utf8) }
         configLock.unlock()
 
         guard let encoded else { return }
         defaults.set(encoded, forKey: key)
         NotificationCenter.default.post(name: .enabledMetricsChanged, object: instance.id)
+    }
+
+    /// 拒写统一出口: 空 / 超上限 → 不落盘, 仅发通知让监听方感知 (A4-6).
+    /// 返回 true 表示调用方应中断写入 (保持旧值).
+    @discardableResult
+    private func rejectIfInvalid(_ labels: [String], for instance: PlatformInstance) -> Bool {
+        guard labels.isEmpty || labels.count > 2 else { return false }
+        NotificationCenter.default.post(name: .enabledMetricsChanged, object: instance.id)
+        return true
     }
 }
 

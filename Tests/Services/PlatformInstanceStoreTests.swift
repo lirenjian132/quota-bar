@@ -54,6 +54,37 @@ final class PlatformInstanceStoreTests: XCTestCase {
         XCTAssertNil(testDefaults.string(forKey: "quotabar.activePlatform"))
     }
 
+    func testLegacyStepfunConfigSurvivesForMigration() {
+        // P1-5: 2.0.x 直升级用户的老 stepfun 配置 (quotabar.platform.stepfun.*)
+        // 不靠 ConfigService 的 legacy 清理处理 — 清理早于迁移会把它删掉搬不到.
+        // 现由 migrateLegacyPerTypeConfig 接管: 搬 key 到 quotabar.instance.stepfun,
+        // 生成默认禁用实例 (isDefaultEnabled 仅 minimax_cn).
+        testDefaults.set([
+            "api_base_url": "https://platform.stepfun.com/api/step.openapi.devcenter.Dashboard",
+            "auth_header": "Cookie",
+            "auth_prefix": "",
+            "api_key": "Oasis-Webid=abc; Oasis-Token=def"
+        ], forKey: "quotabar.platform.stepfun")
+        testDefaults.set(true, forKey: "quotabar.platform.stepfun.pinned")
+        // isEnabled/isPinned 读 AppEnvironment.testDefaults (共享 suite), 先确保无显式状态
+        AppEnvironment.testDefaults.removeObject(forKey: "quotabar.instance.stepfun.enabled")
+
+        let store = PlatformInstanceStore(userDefaults: testDefaults)
+
+        // 老配置搬到新 key (清理由 migrate 自己做, 无需 cleanup 插手)
+        let dict = testDefaults.dictionary(forKey: "quotabar.instance.stepfun")
+        XCTAssertEqual(dict?["api_key"] as? String, "Oasis-Webid=abc; Oasis-Token=def")
+        XCTAssertTrue(testDefaults.bool(forKey: "quotabar.instance.stepfun.pinned"))
+        XCTAssertNil(testDefaults.dictionary(forKey: "quotabar.platform.stepfun"))
+
+        // 默认禁用: 用户没显式启用过就不出现在启用列表 (enabled key 缺省 → 平台默认策略)
+        guard let stepfun = store.instance(id: "stepfun") else {
+            return XCTFail("迁移应生成 stepfun 默认实例")
+        }
+        XCTAssertEqual(stepfun.platformType, .stepfun)
+        XCTAssertFalse(stepfun.isEnabled, "迁移生成的默认实例应保持禁用 (老版本用户可能已不用 Stepfun)")
+    }
+
     func testMigrationIsIdempotentOnReinit() {
         // 首次迁移
         testDefaults.set(["api_key": "sk-x"], forKey: "quotabar.platform.minimax_cn")

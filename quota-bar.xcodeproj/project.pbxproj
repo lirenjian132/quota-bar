@@ -13,6 +13,7 @@
 		0ECB5732D891EBA53C27286D /* ConfigServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A98E64CFC0C8846ECA523CCE /* ConfigServiceTests.swift */; };
 		103E40DB1758C79D15F47295 /* GLMPlatformService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71E2625E187DFF2C5625BA7D /* GLMPlatformService.swift */; };
 		117BDDBA970BF26AB483FFE2 /* TokenRhythmPlatformService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 976CC514E0CD0E0715B60C9A /* TokenRhythmPlatformService.swift */; };
+		16F4C6AF041642CD37D8C87B /* StepFunPlatformTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23B4BE13D111AA713B76B79F /* StepFunPlatformTests.swift */; };
 		19C93794FE75C72EE4975EFF /* MultiInstanceIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 452488BAFA15CAAEA24BC26A /* MultiInstanceIsolationTests.swift */; };
 		1F65B31E5AD7A7B01C4C50AD /* StatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB58DE1F6EE0E55B6A31E060 /* StatusBarController.swift */; };
 		200CF5C2F89173ED8FCCB368 /* PlatformUsageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 440BBA3BCDE1F2F0EAFB3BC0 /* PlatformUsageCache.swift */; };
@@ -38,6 +39,7 @@
 		70A86445A42753EBF395EC1F /* PlatformManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CB8718DDB1B372AE925CD47 /* PlatformManager.swift */; };
 		70B75C2AD8FC2C63DD4BD3ED /* PlatformViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 023B1CB564A2E048FD8675F1 /* PlatformViewModelTests.swift */; };
 		76EB5EDE61066B3E3AB2A569 /* PlatformManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6DAD09F5D59074DE76ED748 /* PlatformManagerTests.swift */; };
+		7B29944C5AB149B947004A86 /* stepfun.template.json in Resources */ = {isa = PBXBuildFile; fileRef = F9E4C4168C411FE8A469B777 /* stepfun.template.json */; };
 		7B9F7A49A96A20BA430E9F71 /* minimax.template.json in Resources */ = {isa = PBXBuildFile; fileRef = 5E09575915041C8761C950A8 /* minimax.template.json */; };
 		85765DCDD271D5DAE8D0B153 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 93960D7EC9A64DB2D93E0B51 /* Assets.xcassets */; };
 		8D6E5641A342F4A08DE786AD /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F512048312237A7FE8515C4 /* AppEnvironment.swift */; };
@@ -60,6 +62,7 @@
 		DDE6CC528DE805603512EA5C /* InMemoryKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E35B3912374D68A90ABC5658 /* InMemoryKeychainStore.swift */; };
 		E4F02DFD5BF56C6DE705DDD7 /* PlatformConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D09945CFD0A3B877A7B72AA /* PlatformConfigStoreTests.swift */; };
 		EE6A19954AB691C7A19299DD /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88AB05E0365F937DAD7E4B42 /* AppDelegate.swift */; };
+		F43415C5427B7C0D8820BFC2 /* StepFunPlatformService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FF07566BC4AF1B08EF83429 /* StepFunPlatformService.swift */; };
 		F7F8310620A1CCBA5477352E /* zh-Hans.json in Resources */ = {isa = PBXBuildFile; fileRef = 7530C3B7D8FD856FE0584F92 /* zh-Hans.json */; };
 		F915048BD49DB45260227EDE /* FileKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C73012372582BAAEA7DB52B8 /* FileKeyStoreTests.swift */; };
 /* End PBXBuildFile section */
@@ -83,6 +86,7 @@
 		18D89E0FCCFC72B60B3013F0 /* PlatformInstanceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformInstanceStore.swift; sourceTree = "<group>"; };
 		1E90CE4A6F3ED54CCE03D6A9 /* PlatformSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformSelectionView.swift; sourceTree = "<group>"; };
 		1EC84AF777250D37572AF820 /* MiniMaxPlatformTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxPlatformTests.swift; sourceTree = "<group>"; };
+		23B4BE13D111AA713B76B79F /* StepFunPlatformTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StepFunPlatformTests.swift; sourceTree = "<group>"; };
 		2F53227F579903794FA18765 /* LaunchAtLoginServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLoginServiceTests.swift; sourceTree = "<group>"; };
 		38DA4A0A0CBD196B6B81E382 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		3BB6A472EEFCFC450D6A01DD /* MiniMaxPlatformService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxPlatformService.swift; sourceTree = "<group>"; };
@@ -96,6 +100,7 @@
 		60CABA4916A6298957939081 /* quota-bar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "quota-bar.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		6421AA3B46B6ABC036E35B08 /* MockNetworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockNetworkService.swift; sourceTree = "<group>"; };
 		6F512048312237A7FE8515C4 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		6FF07566BC4AF1B08EF83429 /* StepFunPlatformService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StepFunPlatformService.swift; sourceTree = "<group>"; };
 		6FFAFAE666EE291C5BE14137 /* MiniMaxModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxModels.swift; sourceTree = "<group>"; };
 		715D8C3273D5B13081D97EA8 /* StatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarView.swift; sourceTree = "<group>"; };
 		71848A30FE6691EDD06ABD37 /* LaunchAtLoginService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLoginService.swift; sourceTree = "<group>"; };
@@ -131,6 +136,7 @@
 		E6DAD09F5D59074DE76ED748 /* PlatformManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformManagerTests.swift; sourceTree = "<group>"; };
 		E7B2CA57DC0C6A9169BD1F81 /* en.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = en.json; sourceTree = "<group>"; };
 		E9724096BB4F65062D5758AD /* tokenrhythm.template.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenrhythm.template.json; sourceTree = "<group>"; };
+		F9E4C4168C411FE8A469B777 /* stepfun.template.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = stepfun.template.json; sourceTree = "<group>"; };
 		FDFBAF9BB3FE72CFBCE0A68B /* GLMPlatformTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GLMPlatformTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -265,9 +271,18 @@
 			children = (
 				0A631531F225E0B1404C0F9C /* glm.template.json */,
 				5E09575915041C8761C950A8 /* minimax.template.json */,
+				F9E4C4168C411FE8A469B777 /* stepfun.template.json */,
 				E9724096BB4F65062D5758AD /* tokenrhythm.template.json */,
 			);
 			path = ConfigTemplates;
+			sourceTree = "<group>";
+		};
+		6904969E2687DBB2AEE938B4 /* StepFunPlatform */ = {
+			isa = PBXGroup;
+			children = (
+				6FF07566BC4AF1B08EF83429 /* StepFunPlatformService.swift */,
+			);
+			path = StepFunPlatform;
 			sourceTree = "<group>";
 		};
 		7623564D4FDC484D8DCDDB7B /* Platforms */ = {
@@ -279,6 +294,7 @@
 				440BBA3BCDE1F2F0EAFB3BC0 /* PlatformUsageCache.swift */,
 				4F4065FD827B79699E2EFD59 /* GLMPlatform */,
 				809E6853BE7DA2EA096D6AD8 /* MiniMaxPlatform */,
+				6904969E2687DBB2AEE938B4 /* StepFunPlatform */,
 				F02FADF239EDFC5A143E8783 /* TokenRhythmPlatform */,
 			);
 			path = Platforms;
@@ -364,6 +380,7 @@
 				FDFBAF9BB3FE72CFBCE0A68B /* GLMPlatformTests.swift */,
 				1EC84AF777250D37572AF820 /* MiniMaxPlatformTests.swift */,
 				452488BAFA15CAAEA24BC26A /* MultiInstanceIsolationTests.swift */,
+				23B4BE13D111AA713B76B79F /* StepFunPlatformTests.swift */,
 				C83975F3441DFAEC05FD1074 /* TokenRhythmPlatformTests.swift */,
 			);
 			path = Platforms;
@@ -453,6 +470,7 @@
 				D72F3AB9C56AF326D6C05999 /* en.json in Resources */,
 				D03AB6DC32355C4B61876063 /* glm.template.json in Resources */,
 				7B9F7A49A96A20BA430E9F71 /* minimax.template.json in Resources */,
+				7B29944C5AB149B947004A86 /* stepfun.template.json in Resources */,
 				AA587DF4053A0053A4FD5B9D /* tokenrhythm.template.json in Resources */,
 				F7F8310620A1CCBA5477352E /* zh-Hans.json in Resources */,
 			);
@@ -490,6 +508,7 @@
 				DB54BC12621BD69094F8D1AA /* RightClickStatusBarView.swift in Sources */,
 				1F65B31E5AD7A7B01C4C50AD /* StatusBarController.swift in Sources */,
 				012C72E225052E73E9FEFA74 /* StatusBarView.swift in Sources */,
+				F43415C5427B7C0D8820BFC2 /* StepFunPlatformService.swift in Sources */,
 				117BDDBA970BF26AB483FFE2 /* TokenRhythmPlatformService.swift in Sources */,
 				3B9D42484D500EAACF2615A3 /* UpdateService.swift in Sources */,
 				00E59E55A8C84C969A80E39D /* main.swift in Sources */,
@@ -519,6 +538,7 @@
 				70B75C2AD8FC2C63DD4BD3ED /* PlatformViewModelTests.swift in Sources */,
 				D568BEF3CAA3F73C9107EDC1 /* RefreshIntervalTests.swift in Sources */,
 				505C7817AAA295E04F56D778 /* StatusBarViewTests.swift in Sources */,
+				16F4C6AF041642CD37D8C87B /* StepFunPlatformTests.swift in Sources */,
 				B2A1B7E625CAFA7C43E80D01 /* TokenRhythmPlatformTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -684,14 +704,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.quota.statusbar;
 				PRODUCT_NAME = QuotaBar;
 				SDKROOT = macosx;
@@ -704,14 +724,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.quota.statusbar;
 				PRODUCT_NAME = QuotaBar;
 				SDKROOT = macosx;

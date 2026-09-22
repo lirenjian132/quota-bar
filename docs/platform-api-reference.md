@@ -17,6 +17,12 @@ Return `UsageResult` with balance information for pay-as-you-go billing models.
 | **OpenRouter** | `GET https://openrouter.ai/api/v1/credits` | `Bearer {api_key}` | `data.total_credits - data.total_usage` | USD |
 | **Novita AI** | `GET https://api.novita.ai/v3/user/balance` | `Bearer {api_key}` | `availableBalance / 10000` | USD (unit: 0.0001) |
 
+> 与 QuotaBar 现状的出入 (2026-09 核对):
+> - **DeepSeek**: 平台支持已在 v2.1.0 移除, 本行仅作 API 形态参考, 当前版本不接此接口.
+> - **Stepfun**: 当前版本 (2.2.0) 的 Stepfun 套餐平台**不使用**本行 `api.stepfun.com/v1/accounts` 余额接口,
+>   而是官方开源客户端 Step Code 的 gRPC-Connect 接口 (`platform.stepfun.com/api/step.openapi.devcenter.Dashboard`
+>   的 `QueryStepPlanRateLimit` + `GetStepPlanStatus`, Oasis 双 cookie 鉴权), 采集流程见 CHANGELOG [2.2.0].
+
 ---
 
 ## Subscription/Quota APIs (套餐额度)

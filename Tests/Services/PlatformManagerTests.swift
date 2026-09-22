@@ -26,4 +26,14 @@ final class PlatformManagerTests: XCTestCase {
         }
         manager.clearAllCaches()
     }
+
+    func testUsageCacheExpiresAfterTimeout() {
+        let cache = PlatformUsageCache<String>()
+        cache.write("value")
+        XCTAssertEqual(cache.read(timeout: 60), "value", "未过期应命中缓存")
+        // timeout 0: write 之后任何已过去的时间都 >= 0 → 立即过期.
+        // 各 service 的 clearCache / 换 key 清缓存依赖这个"过期分支"行为.
+        Thread.sleep(forTimeInterval: 0.01)
+        XCTAssertNil(cache.read(timeout: 0), "0 秒窗口应视为立即过期")
+    }
 }

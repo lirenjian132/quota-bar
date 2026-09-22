@@ -93,40 +93,57 @@ final class GLMPlatformAPIService: PlatformAPIService {
             throw PlatformError.apiError(config.platformType, msg)
         }
 
+        // limits 缺失或空数组: 没有任何可用额度信息, 按无效响应处理.
+        // 不抛错而走空 metrics 的话, UI 只能显示"无数据", 用户分不清是
+        // "没额度" 还是 "接口/账号异常" (R3 盲区测试钉住).
+        guard let limits = usageResponse.data?.limits, !limits.isEmpty else {
+            throw PlatformError.invalidResponse(config.platformType)
+        }
+
         var metrics: [UsageMetric] = []
 
-        if let limits = usageResponse.data?.limits {
-            for limit in limits {
-                if limit.type == "TOKENS_LIMIT" {
-                    // Token 额度, 按 unit 区分窗口: 3 = 5小时, 6 = 每周.
-                    // 已用百分比 percentage → 剩余 = 100 - percentage.
-                    let usedPct = limit.percentage ?? 0
-                    let remainingPct = max(0, 100 - usedPct)
-                    let label = (limit.unit == 6) ? "weekly_limit" : "five_hour"
-                    let resetTime = resetDate(from: limit.nextResetTime)
-                    metrics.append(UsageMetric(
-                        label: label,
-                        currentValue: Double(remainingPct),
-                        totalValue: 100,
-                        unit: "%",
-                        resetTime: resetTime
-                    ))
-                } else if limit.type == "TIME_LIMIT" {
-                    // TIME_LIMIT = MCP 月度调用次数额度.
-                    // 按次数显示: 剩余/总次数 (如 932/1000 次).
-                    // percentage 是已用百分比, 用它判断是否健康.
-                    let remaining = limit.remaining ?? 0
-                    let total = limit.usage ?? 0
-                    let resetTime = resetDate(from: limit.nextResetTime)
-                    metrics.append(UsageMetric(
-                        label: "mcp_monthly",
-                        currentValue: Double(remaining),
-                        totalValue: Double(total),
-                        unit: "times",
-                        resetTime: resetTime
-                    ))
-                }
+        for limit in limits {
+            if limit.type == "TOKENS_LIMIT" {
+                // Token 额度, 按 unit 区分窗口: 3 = 5小时, 6 = 每周.
+                // 已用百分比 percentage → 剩余 = 100 - percentage.
+                // percentage 缺失时跳过该条 (A4-5): 算不出剩余百分比, 默认 0
+                // 会谎报"100% 剩余" (DeepSeek C2 探针).
+                guard let usedPct = limit.percentage else { continue }
+                let remainingPct = max(0, 100 - usedPct)
+                let label = (limit.unit == 6) ? "weekly_limit" : "five_hour"
+                let resetTime = resetDate(from: limit.nextResetTime)
+                metrics.append(UsageMetric(
+                    label: label,
+                    currentValue: Double(remainingPct),
+                    totalValue: 100,
+                    unit: "%",
+                    resetTime: resetTime
+                ))
+            } else if limit.type == "TIME_LIMIT" {
+                // TIME_LIMIT = MCP 月度调用次数额度.
+                // 按次数显示: 剩余/总次数 (如 932/1000 次).
+                // percentage 是已用百分比, 用它判断是否健康.
+                // usage/remaining 缺失时跳过 (A4-5): 次数信息不完整, 默认 0
+                // 会谎报"0 次可用" (DeepSeek C3 探针).
+                guard let usage = limit.usage, let remaining = limit.remaining else { continue }
+                let total = usage
+                let resetTime = resetDate(from: limit.nextResetTime)
+                metrics.append(UsageMetric(
+                    label: "mcp_monthly",
+                    currentValue: Double(remaining),
+                    totalValue: Double(total),
+                    unit: "times",
+                    resetTime: resetTime
+                ))
             }
+        }
+
+        // limits 有元素但全未知 type / 全部因字段缺失被跳过: 处理后 metrics 为空.
+        // R3 只挡了 nil/[] 两种结构性空, 这里兜底静默空 metrics — 直接走空 metrics
+        // 的话 UI 只显示"无数据", 用户分不清"没额度"和"接口/账号异常" (A4-5).
+        // 文案走 i18n (error.glm.emptyLimits), 与其它平台错误同一套本地化机制.
+        guard !metrics.isEmpty else {
+            throw PlatformError.apiError(config.platformType, I18nService.shared.translate("error.glm.emptyLimits"))
         }
 
         // 固定排序: 5 小时 → 周限额 → MCP 月度, 保证主要指标始终在前.
@@ -134,7 +151,7 @@ final class GLMPlatformAPIService: PlatformAPIService {
         metrics.sort { (order[$0.label] ?? 99) < (order[$1.label] ?? 99) }
 
         // 5 小时和周限额有各自的剩余百分比, MCP 月度按次数判断.
-        // 只要任一一项剩余 < 15% 视为偏低. (unit=="%" 和次数型逻辑相同, 合并)
+        // 只要任一一项剩余 < 15% 视为状态异常. (unit=="%" 和次数型逻辑相同, 合并)
         let isHealthy = usageResponse.success && !metrics.isEmpty && metrics.allSatisfy { metric in
             guard let total = metric.totalValue, total > 0 else { return true }
             return metric.currentValue / total * 100 >= 15

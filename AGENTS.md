@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents (ZCode / Claude Code compatible)
 
 # QuotaBar
 
-A macOS menu bar app displaying AI platform API usage/quota statistics. Built with SwiftUI + AppKit hybrid architecture. Supports multiple platform accounts (MiniMax, GLM).
+A macOS menu bar app displaying AI platform API usage/quota statistics. Built with SwiftUI + AppKit hybrid architecture. Supports multiple platform accounts (MiniMax, GLM, 基元律动 TokenRhythm, Stepfun).
 
 ## Build Commands
 
@@ -37,14 +37,14 @@ brew install create-dmg
 | Directory | Purpose |
 |-----------|---------|
 | `App/` | Entry point (`main.swift`, `AppDelegate.swift`), Info.plist |
-| `Models/` | Data models (`PlatformProtocol.swift` - core types, `UsageData.swift` - legacy) |
+| `Models/` | Data models (`PlatformProtocol.swift` - core types, `PlatformInstance.swift`) |
 | `Services/` | Business logic |
 | `Services/Platforms/` | Platform-specific services |
 | `Services/Platforms/MiniMaxPlatform/` | MiniMax API service |
-| `Services/Platforms/TokenRhythmPlatform/` | 基元律动 (TokenRhythm) 余额 service — 网页端 `/api/wallet/summary` + `tr_session` cookie 鉴权 (凭据存 FileKeyStore; 采集流程见 CHANGELOG 2.3.0, 禁止引导用户点网页「退出登录」) |
-| `Services/Platforms/DeepSeekPlatform/` | DeepSeek API service |
+| `Services/Platforms/TokenRhythmPlatform/` | 基元律动 (TokenRhythm) 余额 service — 网页端 `/api/wallet/summary` + `tr_session` cookie 鉴权 (凭据存 FileKeyStore; 采集流程见 CHANGELOG [2.2.0], 禁止引导用户点网页「退出登录」) |
+| `Services/Platforms/StepFunPlatform/` | Stepfun 套餐 service — 官方开源客户端 Step Code 的 gRPC-Connect 接口 (`step.openapi.devcenter.Dashboard`), Oasis 双 cookie + oasis-* 头鉴权, 显示月 Credits 余量% + 重置日 |
 | `Services/Platforms/PlatformManager.swift` | Orchestrates all platform services |
-| `Services/Platforms/PlatformConfigStore.swift` | Per-instance config (UserDefaults dict + Keychain key) |
+| `Services/Platforms/PlatformConfigStore.swift` | Per-instance config (FileKeyStore-backed key; UserDefaults dict 存非密字段) |
 | `Services/Platforms/PlatformInstanceStore.swift` | 账号实例注册表 + 老版本迁移 + 增删改移 |
 | `Services/AppEnvironment.swift` | 测试进程存储隔离路由 |
 | `Services/KeychainStore.swift` | API key 的 Keychain 存取 (仅迁移读取) |
@@ -76,12 +76,20 @@ brew install create-dmg
 
 ## Adding a New Platform
 
+0. 新增 Swift 文件后必须跑 `xcodegen generate` — `project.pbxproj` 由 XcodeGen 生成，手加的文件不进编译（症状：编译报"cannot find X in scope"但文件明明存在）
 1. Add case to `PlatformType` enum in `Models/PlatformProtocol.swift`
 2. Create config template in `Resources/ConfigTemplates/{platform}.template.json`
 3. Create `Services/Platforms/{Platform}Platform/{Platform}PlatformService.swift` implementing `PlatformAPIService`
 4. Register in `PlatformManager.init()`
-5. Add I18n strings in `Resources/en.json` and `Resources/zh-Hans.json`
-6. Write tests first (TDD)
+5. Add I18n strings in `Resources/en.json` and `Resources/zh-Hans.json` — 新平台必配的 key 清单:
+   - `menu.addAccount.{p}` (右键添加账号项)
+   - `menu.metric.{label}` × 每个 metric label (右键「显示指标」可勾选项标题)
+   - `metric.{label}` × 每个 metric label (弹窗卡片标题, 缺失时回退显示原始 label)
+   - `popover.configurePlatform.{p}` + `popover.inputPlaceholder.{p}` (配置面板标题/占位文案; 不配则回退通用 API Key 文案)
+   - cookie/session 型凭据平台的 401 文案: 在 `PlatformError.errorDescription` 的 `unauthorized` 分派 switch 归入 `error.unauthorized.session` 分支 (API key 型归入 `error.unauthorized.key`; switch 穷举由编译器强制, 新平台漏归入直接编译失败)
+6. Check `PopoverContentView` platformType branches (`metricIcon` / `configTitleKey` / `configPlaceholderKey`) — `default` 兜底漏了不报错, 新平台会静默拿到通用图标/文案
+7. Check `ConfigService.availableMetricLabels(for:)` — 新平台若产出菜单默认清单外的 metric label, 用户无法勾选, 状态栏恒显 "--"; 周额度这类同指标多态 (标准/加成/∞) 登记进 `StatusBarViewHelper.labelFamilies` 做同族匹配
+8. Write tests first (TDD)
 
 ## ⚠️ Human-in-the-Loop 原则 (强制)
 
