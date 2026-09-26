@@ -16,6 +16,11 @@ final class PlatformConfigStore {
     private let keychain: KeychainStoring
     // 注入 UserDefaults: 生产用 .standard, 测试用独立 suite, 避免测试 fixture 污染真实配置.
     private let defaults: UserDefaults
+    // 凭据写锁 (P0-2): 四步 (keychain.set → apiKey 内存 → save defaults → clearPlaintext)
+    // 必须原子完成. 自动刷新在 TaskGroup 子线程写回, 用户保存在主线程, 无锁时可交错成
+    // "keychain 是新值 / 内存是旧值" 甚至 defaults 残留明文. 锁内不 await、无重入 —
+    // setAPIKey 空串分支调 resetAPIKey 在持锁前返回, 不构成嵌套加锁.
+    private let writeLock = NSLock()
 
     var isConfigured: Bool {
         guard let key = apiKey else { return false }
@@ -56,9 +61,13 @@ final class PlatformConfigStore {
     func setAPIKey(_ key: String) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
+            // 空串视为清除凭据: 走 resetAPIKey (其内部自持 writeLock, 此处不得
+            // 在持锁状态下调用, NSLock 非递归会死锁).
             resetAPIKey()
             return
         }
+        writeLock.lock()
+        defer { writeLock.unlock() }
         do {
             try keychain.set(trimmed, account: instance.id)
             apiKey = trimmed
@@ -71,6 +80,8 @@ final class PlatformConfigStore {
     }
 
     func resetAPIKey() {
+        writeLock.lock()
+        defer { writeLock.unlock() }
         do {
             try keychain.delete(account: instance.id)
             apiKey = nil

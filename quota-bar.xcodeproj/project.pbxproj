@@ -10,6 +10,7 @@
 		00E59E55A8C84C969A80E39D /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38DA4A0A0CBD196B6B81E382 /* main.swift */; };
 		012C72E225052E73E9FEFA74 /* StatusBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 715D8C3273D5B13081D97EA8 /* StatusBarView.swift */; };
 		0445F1700C8142C38B2C2C60 /* PlatformViewModelRenewSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B02358B4B39FC066BE1F364E /* PlatformViewModelRenewSessionTests.swift */; };
+		0A5303C252A914DE5A8C2BAB /* StepFunSessionRefreshIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD69299E1581D0032CD218CB /* StepFunSessionRefreshIntegrationTests.swift */; };
 		0C5FA28B02B439557D526D8C /* I18nService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C28AC691014D3A92A1B45891 /* I18nService.swift */; };
 		0ECB5732D891EBA53C27286D /* ConfigServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A98E64CFC0C8846ECA523CCE /* ConfigServiceTests.swift */; };
 		103E40DB1758C79D15F47295 /* GLMPlatformService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71E2625E187DFF2C5625BA7D /* GLMPlatformService.swift */; };
@@ -29,6 +30,7 @@
 		37329BE3A96D8A43EC233B91 /* PlatformProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D232697862A3774F1E6E29A /* PlatformProtocolTests.swift */; };
 		3949AEAF25D160896475B059 /* MockLaunchAtLoginService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4FE41FD58D4B7D5DCA7955 /* MockLaunchAtLoginService.swift */; };
 		3B9D42484D500EAACF2615A3 /* UpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8010ECCA47DAC2A94F23E23E /* UpdateService.swift */; };
+		3C97C45DAC12D1AF97D142B7 /* StepFunSessionRefresher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 636DCD7F0DA34ADD4C91320F /* StepFunSessionRefresher.swift */; };
 		42E1C6AD67AAE7176E49C721 /* PlatformConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 084DFA337E4B0D33598A6C81 /* PlatformConfigStore.swift */; };
 		4332FA1571FA2D8DEA35C78E /* InstanceReorderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A4ADF0386438F4745035597 /* InstanceReorderTests.swift */; };
 		486A48792F1359D5EB24475A /* AccountManagementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1EB934DBD7B7AE071C3614B /* AccountManagementTests.swift */; };
@@ -43,6 +45,7 @@
 		76EB5EDE61066B3E3AB2A569 /* PlatformManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6DAD09F5D59074DE76ED748 /* PlatformManagerTests.swift */; };
 		7B29944C5AB149B947004A86 /* stepfun.template.json in Resources */ = {isa = PBXBuildFile; fileRef = F9E4C4168C411FE8A469B777 /* stepfun.template.json */; };
 		7B9F7A49A96A20BA430E9F71 /* minimax.template.json in Resources */ = {isa = PBXBuildFile; fileRef = 5E09575915041C8761C950A8 /* minimax.template.json */; };
+		80823BDC2A7EFDE10FE77030 /* StepFunSessionRefresherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D5B6585FDA9BC58EEB1690D /* StepFunSessionRefresherTests.swift */; };
 		85765DCDD271D5DAE8D0B153 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 93960D7EC9A64DB2D93E0B51 /* Assets.xcassets */; };
 		899FD052DC2B87DD67BBB66E /* LoginCallbackGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AAA31410846A51EEEB5C9E8 /* LoginCallbackGateTests.swift */; };
 		8D6E5641A342F4A08DE786AD /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F512048312237A7FE8515C4 /* AppEnvironment.swift */; };
@@ -97,6 +100,7 @@
 		2F53227F579903794FA18765 /* LaunchAtLoginServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLoginServiceTests.swift; sourceTree = "<group>"; };
 		38DA4A0A0CBD196B6B81E382 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		3BB6A472EEFCFC450D6A01DD /* MiniMaxPlatformService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxPlatformService.swift; sourceTree = "<group>"; };
+		3D5B6585FDA9BC58EEB1690D /* StepFunSessionRefresherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StepFunSessionRefresherTests.swift; sourceTree = "<group>"; };
 		440BBA3BCDE1F2F0EAFB3BC0 /* PlatformUsageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformUsageCache.swift; sourceTree = "<group>"; };
 		452488BAFA15CAAEA24BC26A /* MultiInstanceIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiInstanceIsolationTests.swift; sourceTree = "<group>"; };
 		457147EC3F63B62DB01A8FA3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -106,6 +110,7 @@
 		5BA75C8FA812932BF30AA01E /* RightClickStatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightClickStatusBarView.swift; sourceTree = "<group>"; };
 		5E09575915041C8761C950A8 /* minimax.template.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = minimax.template.json; sourceTree = "<group>"; };
 		60CABA4916A6298957939081 /* quota-bar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "quota-bar.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		636DCD7F0DA34ADD4C91320F /* StepFunSessionRefresher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StepFunSessionRefresher.swift; sourceTree = "<group>"; };
 		6421AA3B46B6ABC036E35B08 /* MockNetworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockNetworkService.swift; sourceTree = "<group>"; };
 		6F512048312237A7FE8515C4 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		6FF07566BC4AF1B08EF83429 /* StepFunPlatformService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StepFunPlatformService.swift; sourceTree = "<group>"; };
@@ -131,6 +136,7 @@
 		A98E64CFC0C8846ECA523CCE /* ConfigServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigServiceTests.swift; sourceTree = "<group>"; };
 		B02358B4B39FC066BE1F364E /* PlatformViewModelRenewSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformViewModelRenewSessionTests.swift; sourceTree = "<group>"; };
 		BC4FE41FD58D4B7D5DCA7955 /* MockLaunchAtLoginService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockLaunchAtLoginService.swift; sourceTree = "<group>"; };
+		BD69299E1581D0032CD218CB /* StepFunSessionRefreshIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StepFunSessionRefreshIntegrationTests.swift; sourceTree = "<group>"; };
 		C0A3DBA8DE8F526ED1553758 /* ConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigService.swift; sourceTree = "<group>"; };
 		C1EB934DBD7B7AE071C3614B /* AccountManagementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountManagementTests.swift; sourceTree = "<group>"; };
 		C28AC691014D3A92A1B45891 /* I18nService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = I18nService.swift; sourceTree = "<group>"; };
@@ -335,6 +341,8 @@
 				836071D651BA022216189D7C /* PlatformInstanceStoreTests.swift */,
 				E6DAD09F5D59074DE76ED748 /* PlatformManagerTests.swift */,
 				7B63EF1839A44BB7F0BFBBE1 /* RefreshIntervalTests.swift */,
+				3D5B6585FDA9BC58EEB1690D /* StepFunSessionRefresherTests.swift */,
+				BD69299E1581D0032CD218CB /* StepFunSessionRefreshIntegrationTests.swift */,
 				06BC24E218440169B884296E /* WebLoginRenewalTests.swift */,
 			);
 			path = Services;
@@ -355,6 +363,7 @@
 			isa = PBXGroup;
 			children = (
 				FD115913AE142E58654D8026 /* LoginWindowController.swift */,
+				636DCD7F0DA34ADD4C91320F /* StepFunSessionRefresher.swift */,
 				50E8FFC55389226BE738CB08 /* WebLoginRenewal.swift */,
 			);
 			path = Login;
@@ -533,6 +542,7 @@
 				1F65B31E5AD7A7B01C4C50AD /* StatusBarController.swift in Sources */,
 				012C72E225052E73E9FEFA74 /* StatusBarView.swift in Sources */,
 				F43415C5427B7C0D8820BFC2 /* StepFunPlatformService.swift in Sources */,
+				3C97C45DAC12D1AF97D142B7 /* StepFunSessionRefresher.swift in Sources */,
 				117BDDBA970BF26AB483FFE2 /* TokenRhythmPlatformService.swift in Sources */,
 				3B9D42484D500EAACF2615A3 /* UpdateService.swift in Sources */,
 				4A2398F10A230478621D7DBA /* WebLoginRenewal.swift in Sources */,
@@ -566,6 +576,8 @@
 				D568BEF3CAA3F73C9107EDC1 /* RefreshIntervalTests.swift in Sources */,
 				505C7817AAA295E04F56D778 /* StatusBarViewTests.swift in Sources */,
 				16F4C6AF041642CD37D8C87B /* StepFunPlatformTests.swift in Sources */,
+				0A5303C252A914DE5A8C2BAB /* StepFunSessionRefreshIntegrationTests.swift in Sources */,
+				80823BDC2A7EFDE10FE77030 /* StepFunSessionRefresherTests.swift in Sources */,
 				B2A1B7E625CAFA7C43E80D01 /* TokenRhythmPlatformTests.swift in Sources */,
 				E9CD94290CB058CAED342E9C /* WebLoginRenewalTests.swift in Sources */,
 			);

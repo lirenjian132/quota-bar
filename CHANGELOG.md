@@ -50,6 +50,11 @@
 - Stepfun cookie 粘错格式（缺 `Oasis-Webid`）由 `invalidResponse`（「无效的响应数据」）改报 `apiError` 并给出粘贴格式提示（文案走 i18n key `error.stepfun.cookieFormat`，中英双语）
 - GLM `limits` 缺失/空数组由"空 metrics 静默显示无数据"改报 `invalidResponse`（用户可分清"没额度"与"接口异常"）
 - legacy 清理不再删除现役平台 `stepfun` 的 UserDefaults 残留（2.0.x 直升级用户的老配置改由实例迁移接管，避免先删后搬不到）
+- **Stepfun 自动刷新覆盖用户新保存的凭据（CAS 缺失，P0）**：预刷新 POST 在途期间用户在主线程保存新 key / 一键续期写新凭据，刷新完成时旧写法无条件写回 → 用户的新凭据被旧凭据刷出的串覆盖（表现为"刚改的 key 自己变回去"）。修复：写回前 CAS 校验 `store.apiKey == 本次刷新用的凭据`，不等则放弃写回（别人的更新优先）；主请求与落库都以用户新值为准
+- **`PlatformConfigStore.setAPIKey`/`resetAPIKey` 非线程安全（P0）**：四步（keychain 写 → 内存 apiKey → defaults 落盘 → 清明文）无锁，自动刷新（TaskGroup 子线程）与用户保存（主线程）可交错成"keychain 是新值 / 内存是旧值"甚至 defaults 残留明文的分裂态。修复：`writeLock`（NSLock）包住整个方法，锁内不 await、无重入
+- **同实例 Stepfun 会话双刷新 POST（P1）**：预刷新无单飞门控，`saveAPIKey` 后的新 fetch 与 `fetchAllUsage` 在途可对同一账号双发 RefreshToken（多耗一次令牌轮换，且两次写回竞态）。修复：`PlatformManager` per-instance in-flight 刷新任务字典（仿 services 字典 + serviceLock 模式），已有在途则 await 复用其结果，任务结束摘除字典项；门控键带凭据维度（在途刷新期间换了新凭据时不误复用旧结果，否则新凭据会被旧凭据刷出的串覆盖）；与 CAS 叠加后落库值仍一致
+- **Stepfun `exp` 契约漂移静默退化（P1）**：JWT payload 的 `exp` 只接受 JSON 数字，服务端改成字符串 `"1790000000"` 时静默不刷新，拖到主请求 401 才暴露。修复：数字优先、字符串 `Double(s)` fallback；非数字字符串仍按"无 exp"处理
+- Stepfun 预刷新接入处同一凭据解析两遍（needsRefresh + refresh 各 parse 一次）合并为一次 parse，`needsRefresh` 增加接收已解析结果的重载；HTTP 200 但 `accessToken` 缺失/null 判刷新失败不阻断主请求（原无测试覆盖，已补齐，含 `refreshToken` 缺失/null 同路径）
 
 ## [2.0.4] - 2026-07-16
 
