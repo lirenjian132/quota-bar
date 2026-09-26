@@ -15,7 +15,8 @@
 - TokenRhythm 请求按账号 5 分钟节流（service 内缓存），约 10 个账号高频刷新也不易触发风控；401 时显示"认证失败"提示重粘
 - 配置界面按平台区分文案：TokenRhythm 输入框提示"粘贴 tr_session 会话值"而非"API Key"
 - **Stepfun（阶跃星辰）套餐平台**：显示套餐月 Credits 余量百分比 + 月度重置日，订阅失效标红。接口契约来自官方开源客户端 Step Code（`platform.stepfun.com` gRPC-Connect `step.openapi.devcenter.Dashboard`：`QueryStepPlanRateLimit` + `GetStepPlanStatus`），非公开 API；此前曾实现 Oasis-Token 内部接口版（参照 CodexBar 逆向文档）并撤下，本版以 Step Code 开源客户端的 gRPC-Connect 契约重新实现
-- Stepfun 鉴权 = 网页 SSO 双 cookie（`Oasis-Webid` + `Oasis-Token`）+ `oasis-appid/platform/webid` 三头（缺头会被服务端判「令牌挪用」401）。凭据同 TokenRhythm 存 FileKeyStore；**双 JWT 结构：用户票据 30 分钟（服务端不校验）+ 设备票据 30 天（实际有效期，实测跨夜有效）**，登录一次粘贴即可
+- Stepfun 鉴权 = 网页 SSO 双 cookie（`Oasis-Webid` + `Oasis-Token`）+ `oasis-appid/platform/webid` 三头（缺头会被服务端判「令牌挪用」401）。凭据同 TokenRhythm 存 FileKeyStore；双 JWT 结构：access 票据寿命实测 8~9 小时（即此前观察到的"会话死亡"真因）、refresh 票据 30 天且每次刷新滑动续期
+- **Stepfun 会话自动滚动刷新**：每次拉取前本地解析 access 票据过期时间，剩 5 分钟寿命才自动调 `RefreshToken` 端点（`/passport/` 前缀，非 `/api/`）换新票写回；30 天 refresh 滑动窗口内会话无限滚动——**无需手动续期，死会话甚至能被自动救活**；仅断网超 30 天需重登。刷新失败不阻断主流程（照走 401 → 重新登录入口）
 - 凭据采集流程：登录 platform.stepfun.com → 打开 DevTools/应用程序面板（Application → Cookies）→ 复制 `Oasis-Webid` 与 `Oasis-Token` 两个值，按 `Oasis-Webid=…; Oasis-Token=…` 两段格式粘贴到账号配置框
 - Stepfun 非 credit 套餐族（`plan_family != 2`）降级显示 5 小时 / 周窗口剩余率（`five_hour_usage_left_rate` / `weekly_usage_left_rate`），右键菜单「显示指标」可勾选；cookie 格式错误早失败
 - 可配置指标显示：每个平台可勾选最多 2 个指标（5 小时窗口 / 周限额 / MCP 月度等）显示在菜单栏，右键菜单「显示指标」多选
