@@ -189,3 +189,20 @@ def test_active_instance_skips_disabled(tmp_path):
     cfg.set_active_instance_id(a.id)
     cfg.set_enabled(a.id, False)
     assert cfg.active_instance_id() == b.id
+
+
+def test_overlay_settings_roundtrip(tmp_path):
+    cfg = ConfigService(home=str(tmp_path))
+    assert cfg.overlay_enabled() is True   # 默认开
+    assert cfg.overlay_pos() is None       # 默认无记忆位置
+    cfg.set_overlay_enabled(False)
+    cfg.set_overlay_pos((123, 456))
+    assert cfg.overlay_enabled() is False
+    assert cfg.overlay_pos() == (123, 456)
+    # 持久化
+    cfg2 = ConfigService(home=str(tmp_path))
+    assert cfg2.overlay_enabled() is False
+    assert cfg2.overlay_pos() == (123, 456)
+    # 脏数据容错:非二元组视为无位置
+    cfg2._settings["globals"]["overlay_pos"] = "garbage"
+    assert cfg2.overlay_pos() is None

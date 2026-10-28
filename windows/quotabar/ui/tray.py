@@ -33,6 +33,7 @@ from ..models import (
     RefreshInterval,
 )
 from .detail_window import DetailWindow
+from .overlay import StatusOverlay
 
 #: 状态点/徽章底色(render.status_color 的四色 → 具体色值)
 _STATUS_COLORS = {
@@ -83,6 +84,8 @@ class TrayApp(QObject):
         self._icon_instance: dict[str, str] = {}
         self._detail: Optional[DetailWindow] = None
         self._menu: Optional[QMenu] = None
+        # 任务栏数字面板:Windows 上 Mac 菜单栏的对等物(大号数字,托盘小图标只作备用入口)
+        self._overlay = StatusOverlay(self)
         self._bridge = _FetchBridge()
         self._bridge.finished.connect(self._on_fetch_done)
         self._timer = QTimer(self)
@@ -97,6 +100,9 @@ class TrayApp(QObject):
         """启动定时刷新,并立即拉一次数据"""
         self._restart_timer()
         self._show_startup_bubble()
+        if self.config.overlay_enabled():
+            self._overlay.show()
+        self._overlay.refresh()
         self.fetch_all_async()
 
     def _show_startup_bubble(self) -> None:
@@ -195,6 +201,7 @@ class TrayApp(QObject):
                 self._errors[iid] = result.error
                 # 失败时保留旧 data:详情窗按「陈旧数据 + 提示」展示(对齐 macOS)
         self._rebuild_trays()
+        self._overlay.refresh()
         self._reload_detail()
 
     def _on_timer(self) -> None:
@@ -266,6 +273,7 @@ class TrayApp(QObject):
             painter.setPen(QColor(_BADGE_TEXT_COLOR))
             font = QFont()
             font.setBold(True)
+            font.setWeight(QFont.Black)  # 加重笔画,缩到 16px 托盘尺寸后仍可辨
             font.setPixelSize(_ICON_TEXT_SIZE if len(text) <= 3 else _ICON_TEXT_SIZE_SMALL)
             painter.setFont(font)
             painter.drawText(0, 0, _ICON_SIZE, _ICON_SIZE, int(Qt.AlignCenter), text)
@@ -347,6 +355,13 @@ class TrayApp(QObject):
             act.triggered.connect(
                 lambda checked=False, m=mode_key, sub=display_menu: self._set_display_mode(m, sub)
             )
+
+        # 任务栏数字面板开关(主显示,默认开)
+        overlay_act = menu.addAction(i18n.t("menu.taskbarOverlay"))
+        overlay_act.setCheckable(True)
+        overlay_act.setChecked(cfg.overlay_enabled())
+        overlay_act.triggered.connect(lambda checked=False: self._toggle_overlay(checked))
+        menu.addSeparator()
 
         # 刷新间隔 ▸(互斥;改后重置定时器)
         interval_menu = menu.addMenu(i18n.t("menu.refreshInterval"))
@@ -451,6 +466,14 @@ class TrayApp(QObject):
         """立即刷新:清所有实例缓存,再立即后台拉取"""
         self.manager.clear_all_caches()
         self.fetch_all_async()
+
+    def _toggle_overlay(self, checked: bool) -> None:
+        self.config.set_overlay_enabled(checked)
+        if checked:
+            self._overlay.refresh()
+            self._overlay.show()
+        else:
+            self._overlay.hide()
 
     def _set_display_mode(self, mode: str, sub: Optional[QMenu] = None) -> None:
         self.config.set_display_mode(mode)

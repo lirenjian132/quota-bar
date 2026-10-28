@@ -389,3 +389,28 @@ class ConfigService:
         with self._lock:
             self._settings["globals"]["active_instance_id"] = instance_id
             self._save_settings()
+
+    # ------------------------------------------------------------ 任务栏数字面板(overlay)
+
+    def overlay_enabled(self) -> bool:
+        """任务栏数字面板开关,默认开(它是 Windows 上替代 Mac 菜单栏的主显示)"""
+        with self._lock:
+            return bool(self._settings["globals"].get("overlay_enabled", True))
+
+    def set_overlay_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._settings["globals"]["overlay_enabled"] = enabled
+            self._save_settings()
+
+    def overlay_pos(self) -> Optional[tuple[int, int]]:
+        """面板位置(用户拖拽后记忆);None = 用默认位置"""
+        with self._lock:
+            pos = self._settings["globals"].get("overlay_pos")
+            if isinstance(pos, list) and len(pos) == 2:
+                return int(pos[0]), int(pos[1])
+            return None
+
+    def set_overlay_pos(self, pos: tuple[int, int]) -> None:
+        with self._lock:
+            self._settings["globals"]["overlay_pos"] = [int(pos[0]), int(pos[1])]
+            self._save_settings()

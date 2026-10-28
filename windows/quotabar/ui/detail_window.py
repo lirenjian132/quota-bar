@@ -129,30 +129,10 @@ class DetailWindow(QDialog):
 
     @staticmethod
     def _taskbar_top_edge(screen) -> Optional[int]:
-        """底部任务栏的上沿坐标;仅当任务栏横跨该屏幕底部时采用,否则返回 None"""
-        try:
-            import ctypes
+        """底部任务栏的上沿坐标(委托 winutil 共用实现)"""
+        from .winutil import taskbar_top_edge
 
-            class _RECT(ctypes.Structure):
-                _fields_ = [
-                    ("left", ctypes.c_long), ("top", ctypes.c_long),
-                    ("right", ctypes.c_long), ("bottom", ctypes.c_long),
-                ]
-
-            hwnd = ctypes.windll.user32.FindWindowW("Shell_TrayWnd", None)
-            if not hwnd:
-                return None
-            rect = _RECT()
-            if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-                return None
-            sgeo = screen.geometry()
-            overlaps_x = rect.left < sgeo.right() and rect.right() > sgeo.left()
-            at_bottom = rect.top > sgeo.center().y()
-            if overlaps_x and at_bottom:
-                return rect.top
-        except Exception:
-            pass
-        return None
+        return taskbar_top_edge(screen.geometry())
 
     # ------------------------------------------------------------ 整体构建
 

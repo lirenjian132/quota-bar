@@ -115,5 +115,6 @@
   "login.hint": "在网页中完成登录（含验证码/滑块）后，点「完成并提取」，自动保存登录状态",
   "login.complete": "完成并提取",
   "login.missing.title": "未检测到登录凭据",
-  "login.missing.message": "尚未检测到登录状态，请先在网页中完成登录，再点「完成并提取」。"
+  "login.missing.message": "尚未检测到登录状态，请先在网页中完成登录，再点「完成并提取」。",
+  "menu.taskbarOverlay": "任务栏数字面板"
 }
