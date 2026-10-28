@@ -2,6 +2,19 @@
 
 本项目的所有重要变更记录。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [2.2.0-win.1] - 未发布
+
+> Windows 移植第一阶段（M1）：基于本分支 macOS 版功能对齐，Python 3.14 + PyQt5 重写，代码位于 `windows/` 子目录（Swift 原版不动）。跨平台开发约定见 `windows/README.md`。
+
+### Added
+- Windows 版核心层：平台/指标/错误模型、配置与凭据存储（`%APPDATA%\QuotaBar\settings.json` + `keys.json`，原子写）、多账号编排（每账号独立 service 缓存：MiniMax/GLM 10s、Stepfun/TokenRhythm 300s 防风控；并发拉取、单账号失败不拖垮整批）、渲染纯函数（状态色判定顺序/托盘数字口径/大数格式化与 Swift 版同口径）、i18n（直接复用原版 en.json / zh-Hans.json）
+- 四平台取数逻辑 1:1 移植（接口契约、鉴权形态、时间戳三重形态、解析坑点全部保留）：GLM 裸 key 无 Bearer、percentage 为已用需 100-x；MiniMax Bearer key、周额度三态（普通/150% 加成/∞）、毫秒绝对/相对时间戳双形态；Stepfun gRPC-Connect 五头契约（oasis-webid 从 cookie 拆出配对）、credit/降级双路、订阅状态静默降级、时间戳合理性区间过滤；TokenRhythm 字符串余额解析、辅端点赠金到期监控（失败优雅降级）
+- 托盘 UI：钉选账号各一个托盘图标（动态绘制状态点 + 数字，勾 2 指标时双行显示）、tooltip 全指标、左键详情窗、右键菜单全项（立即刷新/已用剩余/刷新间隔/平台增删改排序/每账号勾指标≤2/语言/关于/退出）
+- pytest 单测 62 个：四平台解析（含全部坑点回归）、配置层规则（墓碑/最后启用保护/指标校验）、渲染口径、编排（缓存按账号隔离/部分失败隔离/未预期异常兜底）
+
+### 暂未移植（后续迭代）
+- cookie 平台网页登录一键续期（WebView 等效方案）、Stepfun 会话自动滚动刷新、开机自启（注册表 Run 键）、自动更新
+
 ## [2.2.0] - 未发布
 
 > 2.1.0 曾以 fork DMG 形式存在（未进官方 appcast），内容并入本版。

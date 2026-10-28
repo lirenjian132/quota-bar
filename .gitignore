@@ -22,3 +22,8 @@ DerivedData/
 *.swo
 *~
 *.profraw
+
+# Python (Windows 版)
+__pycache__/
+*.pyc
+.pytest_cache/

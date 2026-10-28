@@ -1,0 +1,7 @@
+{
+  "api_base_url": "https://platform.stepfun.com/api/step.openapi.devcenter.Dashboard",
+  "auth_header": "Cookie",
+  "auth_prefix": "",
+  "api_key": "",
+  "region": "domestic"
+}

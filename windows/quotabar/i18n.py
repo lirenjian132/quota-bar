@@ -1,0 +1,80 @@
+# -*- coding: utf-8 -*-
+"""国际化:复用 macOS 版的 Resources/en.json 与 zh-Hans.json(已拷入 windows/Resources)。
+
+占位符语义与 Swift 的 String(format:) 对齐:%@ 与 %d 按出现顺序消费参数。
+未命中的 key 返回 key 本身(调用方可回退原始 label)。
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from typing import Optional
+
+LOCALE_EN = "en"
+LOCALE_ZH = "zh-Hans"
+
+
+def _default_resources_dir() -> str:
+    import os
+
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Resources")
+
+
+class I18n:
+    def __init__(self, resources_dir: Optional[str] = None, locale: str = LOCALE_ZH):
+        self._dir = resources_dir or _default_resources_dir()
+        self._tables: dict[str, dict[str, str]] = {}
+        self._locale = locale
+        self._lock = threading.Lock()
+        for loc in (LOCALE_EN, LOCALE_ZH):
+            path = f"{self._dir}/{loc}.json"
+            try:
+                with open(path, encoding="utf-8") as f:
+                    self._tables[loc] = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                self._tables[loc] = {}
+
+    @property
+    def locale(self) -> str:
+        return self._locale
+
+    def set_locale(self, locale: str) -> None:
+        with self._lock:
+            self._locale = locale
+
+    def t(self, key: str, *args) -> str:
+        """按当前语言取文案;按出现顺序用 args 填充 %@ / %d 占位符"""
+        table = self._tables.get(self._locale) or {}
+        s = table.get(key) or self._tables.get(LOCALE_EN, {}).get(key) or key
+        if not args:
+            return s
+        out: list[str] = []
+        arg_i = 0
+        i = 0
+        while i < len(s):
+            ch = s[i]
+            if ch == "%":
+                if i + 1 < len(s) and s[i + 1] == "%":
+                    out.append("%")  # %% 转义为字面 %
+                    i += 2
+                    continue
+                if i + 1 < len(s) and s[i + 1] in "@d" and arg_i < len(args):
+                    out.append(str(args[arg_i]))
+                    arg_i += 1
+                    i += 2
+                    continue
+            out.append(ch)
+            i += 1
+        return "".join(out)
+
+
+_instance: Optional[I18n] = None
+
+
+def get_i18n() -> I18n:
+    """模块级单例(UI 层换语言时直接 set_locale 即时生效)"""
+    global _instance
+    if _instance is None:
+        _instance = I18n()
+    return _instance
