@@ -107,17 +107,52 @@ class DetailWindow(QDialog):
         self._move_to_bottom_right()
 
     def _move_to_bottom_right(self) -> None:
-        """把窗口放到当前屏幕右下角、贴近任务栏上沿。
+        """把窗口放到当前屏幕右下角、贴任务栏上沿。
 
         Windows 拿不到托盘图标的几何位置,退而求其次:光标所在屏幕的右下角。
+        下界不用 availableGeometry(部分系统不会把任务栏让干净,窗口底边会被压住),
+        直接取任务栏(Shell_TrayWnd)的真实上沿;拿不到再退回 availableGeometry。
         """
         screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         if screen is None:
             return
         geo = screen.availableGeometry()
-        x = geo.right() - self.width() - _MARGIN_RIGHT
-        y = geo.bottom() - self.height() - _MARGIN_BOTTOM
+        bottom_limit = self._taskbar_top_edge(screen)
+        if bottom_limit is None:
+            bottom_limit = geo.bottom()
+        # 注意用 frameGeometry(整窗框,含标题栏+边框):move() 定位的是窗框左上角,
+        # 用客户区 height() 会恒差一个标题栏高度,导致底边压进任务栏
+        frame = self.frameGeometry()
+        x = geo.right() - frame.width() - _MARGIN_RIGHT
+        y = bottom_limit - frame.height() - _MARGIN_BOTTOM
         self.move(max(geo.left(), x), max(geo.top(), y))
+
+    @staticmethod
+    def _taskbar_top_edge(screen) -> Optional[int]:
+        """底部任务栏的上沿坐标;仅当任务栏横跨该屏幕底部时采用,否则返回 None"""
+        try:
+            import ctypes
+
+            class _RECT(ctypes.Structure):
+                _fields_ = [
+                    ("left", ctypes.c_long), ("top", ctypes.c_long),
+                    ("right", ctypes.c_long), ("bottom", ctypes.c_long),
+                ]
+
+            hwnd = ctypes.windll.user32.FindWindowW("Shell_TrayWnd", None)
+            if not hwnd:
+                return None
+            rect = _RECT()
+            if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return None
+            sgeo = screen.geometry()
+            overlaps_x = rect.left < sgeo.right() and rect.right() > sgeo.left()
+            at_bottom = rect.top > sgeo.center().y()
+            if overlaps_x and at_bottom:
+                return rect.top
+        except Exception:
+            pass
+        return None
 
     # ------------------------------------------------------------ 整体构建
 
