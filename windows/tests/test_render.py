@@ -131,3 +131,27 @@ def test_filter_same_family_no_duplicate():
     ]
     got = filter_metrics(metrics, [LABEL_WEEKLY_LIMIT, LABEL_WEEKLY_BOOSTED])
     assert [m.label for m in got] == [LABEL_WEEKLY_BOOSTED]
+
+
+def test_account_initials():
+    """任务栏面板短标签:平台首字母;同平台多账号加序号,单账号不带号"""
+    from quotabar.models import PlatformInstance, PlatformType
+    from quotabar.ui.overlay import account_initials
+
+    insts = [
+        PlatformInstance("minimax_cn-2", PlatformType.MINIMAX_CN, "主力"),
+        PlatformInstance("minimax_cn-3", PlatformType.MINIMAX_CN, "备用"),
+        PlatformInstance("glm_cn-1", PlatformType.GLM_CN, "GLM"),
+        PlatformInstance("stepfun-1", PlatformType.STEPFUN, "Stepfun"),
+        PlatformInstance("tokenrhythm-1", PlatformType.TOKENRHYTHM, "基元律动"),
+    ]
+    assert account_initials(insts) == {
+        "minimax_cn-2": "M1",
+        "minimax_cn-3": "M2",
+        "glm_cn-1": "G",
+        "stepfun-1": "S",
+        "tokenrhythm-1": "J",
+    }
+    # 只有一个 MiniMax 时:M 不带序号
+    solo = [PlatformInstance("minimax_cn-1", PlatformType.MINIMAX_CN, "x")]
+    assert account_initials(solo) == {"minimax_cn-1": "M"}
