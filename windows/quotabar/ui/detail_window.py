@@ -445,19 +445,28 @@ class DetailWindow(QDialog):
     def _open_login(self, platform: PlatformType) -> None:
         """打开系统浏览器登录,登录完成后把凭据填进配置框。
 
-        优先用系统浏览器(Edge/Chrome):内置 WebEngine 的 Chromium 太旧,
-        现代站点渲染不出来。系统浏览器起不来时退回内嵌方案。
+        用系统浏览器(Edge/Chrome):内置 WebEngine 的 Chromium 太旧(87 版),
+        现代站点渲染不出来,所以直接走系统浏览器 + CDP 取 cookie。
         """
         from .browser_login import BrowserLoginSession, find_browser
 
         if find_browser() is None:
-            self._login_with_embedded(platform)
+            # 没有可用的系统浏览器:提示手动粘贴 cookie
+            QMessageBox.warning(
+                self,
+                i18n.t("app.name"),
+                i18n.t("login.noBrowser"),
+            )
             return
 
         session = BrowserLoginSession(platform)
         if not session.start():
             session.close()
-            self._login_with_embedded(platform)
+            QMessageBox.warning(
+                self,
+                i18n.t("app.name"),
+                i18n.t("login.noBrowser"),
+            )
             return
 
         dlg = _WaitLoginDialog(self)
@@ -469,17 +478,6 @@ class DetailWindow(QDialog):
         if credential:
             self._api_key_text = credential
             self._build_ui()
-
-    def _login_with_embedded(self, platform: PlatformType) -> None:
-        """兜底:内嵌浏览器登录窗"""
-        from .login_window import LoginWindow
-
-        win = LoginWindow(platform, self)
-        if win.exec_() == QDialog.Accepted:
-            credential = win.credential()
-            if credential:
-                self._api_key_text = credential
-                self._build_ui()
 
     def _open_config(self, instance_id: Optional[str]) -> None:
         if not instance_id:

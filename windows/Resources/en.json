@@ -126,5 +126,6 @@
   "login.webengineTooOld": "The embedded browser is too old for this site. Please sign in with your normal browser and paste the cookie into the config field.",
   "login.browserHint": "Sign in in the newly opened browser window, then come back here and click \"Done & extract\" — the app will read the credentials automatically.",
   "detail.dragToReorder": "Drag a label onto another to reorder",
-  "menu.showPercent": "Show percent sign"
+  "menu.showPercent": "Show percent sign",
+  "login.noBrowser": "No usable browser (Edge/Chrome) found. Please copy the cookie manually from your browser into the config field."
 }

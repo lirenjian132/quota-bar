@@ -69,17 +69,7 @@ def main() -> int:
     _fix_qt_plugin_path()
     _install_crash_guard()
 
-    from PyQt5.QtCore import Qt
     from PyQt5.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
-
-    # WebEngine 必须在 QApplication 创建前导入,并开启共享 OpenGL 上下文
-    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
-    try:
-        from quotabar.ui.login_window import ensure_webengine
-
-        ensure_webengine()
-    except Exception:
-        pass  # 缺 WebEngine 时只是没有一键登录功能,不影响其它功能
 
     from quotabar.config import ConfigService
     from quotabar.i18n import get_i18n

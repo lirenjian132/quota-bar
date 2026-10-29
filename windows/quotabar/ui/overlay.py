@@ -35,6 +35,7 @@ from .winutil import (
     get_taskbar_bg_color,
     is_covered_by_taskbar,
     move_in_parent,
+    set_hit_region,
     taskbar_rect,
 )
 
@@ -182,13 +183,12 @@ class _TooltipWindow(QWidget):
             if acc != last_acc:
                 if last_acc is not None:
                     line += 1  # 账号之间留一行空隙
-                # 彩色圆角小块(白字):比纯彩色文字更醒目、更有标签感
+                # 账号标签:彩色加粗文字(不用色块——色块显得生硬)
                 acc_label = QLabel(acc)
-                acc_label.setAlignment(Qt.AlignCenter)
-                acc_label.setFixedHeight(15)
+                acc_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 acc_label.setStyleSheet(
-                    f"background-color:{acc_color}; color:#FFFFFF; border-radius:3px;"
-                    " font-size:10px; font-weight:bold; border: none;"
+                    f"color:{acc_color}; font-size:12px; font-weight:bold;"
+                    " border: none; background: transparent;"
                 )
                 self._grid.addWidget(acc_label, line, 0, Qt.AlignLeft | Qt.AlignVCenter)
                 last_acc = acc
@@ -235,26 +235,31 @@ class StatusOverlay(QWidget):
 
     def __init__(self, tray):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        # 不用 WA_TranslucentBackground:alpha 窗口的命中测试按像素 alpha 判定,
-        # 文字旁的透明处会把鼠标直接穿透给下层窗口(置顶应用),hover/点击收不到。
-        # 改成不透明窗口、底色取任务栏色 —— 视觉上与任务栏无缝,命中按整个矩形。
+        # 半透明:Win10 任务栏本身是半透明材质(颜色=壁纸透过后的混合),
+        # 面板用半透明底色就能让任务栏颜色透上来 —— 换壁纸/换主题自动跟随,
+        # 不用去采样一个会过期的死颜色。
+        # 命中测试:alpha 窗口默认按像素 alpha 判定,透明处会穿透给下层窗口;
+        # 用 SetWindowRgn 把整个矩形设为命中区即可(见 showEvent)。
+        self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        # 关键:声明不透明,Qt 重绘时不再先擦背景再画 —— 否则鼠标在面板上移动
-        # 触发重绘时会看到整条面板"闪一下"
-        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
-        self.setAutoFillBackground(False)
         self.setMouseTracking(True)
         self._tray = tray
         self._chips: list[tuple[QRect, str]] = []    # [(QRect, instance_id)]
         self._hover_index = -1
         self._embedded = False
-        self._bg_color = get_taskbar_bg_color()
+        self._bg_color = QColor(*get_taskbar_bg_color())
+        self._is_dark = self._bg_color.lightness() < 128
         self._tip = _TooltipWindow()
         # 置顶守护:任务栏与置顶应用(如 ZCode)都会盖住面板,
         # 用 500ms 轻量检测判断是否真被盖,被盖才重新置顶(避免透明窗口闪烁)
         self._topmost_timer = QTimer(self)
         self._topmost_timer.timeout.connect(self._ensure_visible)
         self._topmost_timer.start(500)
+        # 任务栏颜色重采样:Win10 任务栏是半透明材质,壁纸/主题变了颜色就变,
+        # 定期重采以判断明暗(决定文字用白还是深色)
+        self._theme_timer = QTimer(self)
+        self._theme_timer.timeout.connect(self._refresh_taskbar_theme)
+        self._theme_timer.start(2000)
         # 拖拽移动(位置持久化:想放左放右都行)
         self._press_pos: Optional[QPoint] = None
         self._press_win_pos: Optional[QPoint] = None
@@ -273,6 +278,21 @@ class StatusOverlay(QWidget):
             ctypes.c_void_p(int(self.winId())), ctypes.byref(pid)
         )
         return pid.value
+
+    def _refresh_taskbar_theme(self) -> None:
+        """重采样任务栏颜色,判断明暗(换壁纸/换主题后自动跟上)"""
+        color = get_taskbar_bg_color()
+        if not color:
+            return
+        self._bg_color = QColor(*color)
+        self._is_dark = self._bg_color.lightness() < 128
+        self.update()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # alpha 窗口默认按像素 alpha 命中,透明处会穿透给下层窗口;
+        # 设命中区为整个矩形,面板才能正常接收 hover/点击
+        set_hit_region(int(self.winId()), self.width(), self.height())
 
     def _ensure_visible(self) -> None:
         """守护:嵌入模式下探测 explorer 重启;浮层模式下被盖则提回最前。
@@ -321,7 +341,7 @@ class StatusOverlay(QWidget):
         # 嵌入后不能再用 alpha 透明(child window 不支持 layered):
         # 底色取任务栏实际颜色,视觉上与任务栏融为一体
         self.setAttribute(Qt.WA_TranslucentBackground, False)
-        self._bg_color = get_taskbar_bg_color()
+        self._bg_color = QColor(*get_taskbar_bg_color())
         self._place()
 
     def detach(self) -> None:
@@ -345,10 +365,11 @@ class StatusOverlay(QWidget):
         """
         instances = self.overlay_instances()
         label_fm = QFontMetrics(self._label_font())
-        num_fm = QFontMetrics(self._num_font("100"))
         width = PADDING * 2
         for index, inst in enumerate(instances):
             label, text = self._chip_texts(inst)
+            # 用**实际文本**的字体度量,不能用固定样本("100"比"1"宽,会算窄导致末尾截断)
+            num_fm = QFontMetrics(self._num_font(text))
             width += label_fm.horizontalAdvance(label) + _GAP_LABEL_NUM
             width += num_fm.horizontalAdvance(text)
             if index < len(instances) - 1:
@@ -466,12 +487,13 @@ class StatusOverlay(QWidget):
         )
         self._chips = []
 
-        # 铺满任务栏色:与任务栏融为一体(不透明窗口,鼠标命中按整个矩形)
-        base = QColor(*self._bg_color)
+        # 半透明底色:下面的任务栏颜色会透上来,换壁纸自动跟随
+        base = QColor(self._bg_color)
+        base.setAlpha(170 if self._is_dark else 165)
         painter.fillRect(self.rect(), base)
         light = _taskbar_is_light()
         # 数值恒为白(浅色任务栏用深色);标签用状态色随额度变色
-        num_color = QColor("#FFFFFF") if not light else QColor("#1E1E1E")
+        num_color = QColor("#FFFFFF") if not light else QColor("#1E1E1E")  # noqa: F841
 
         x = PADDING
         for index, inst in enumerate(instances):
