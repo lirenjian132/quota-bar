@@ -432,7 +432,35 @@ class DetailWindow(QDialog):
         self._root.addLayout(buttons)
 
     def _open_login(self, platform: PlatformType) -> None:
-        """打开内嵌浏览器登录窗,登录完成后把凭据填进配置框"""
+        """打开系统浏览器登录,登录完成后把凭据填进配置框。
+
+        优先用系统浏览器(Edge/Chrome):内置 WebEngine 的 Chromium 太旧,
+        现代站点渲染不出来。系统浏览器起不来时退回内嵌方案。
+        """
+        from .browser_login import BrowserLoginSession, find_browser
+
+        if find_browser() is None:
+            self._login_with_embedded(platform)
+            return
+
+        session = BrowserLoginSession(platform)
+        if not session.start():
+            session.close()
+            self._login_with_embedded(platform)
+            return
+
+        dlg = _WaitLoginDialog(self)
+        try:
+            dlg.exec_()   # 用户在浏览器里登录完,回这里点「完成并提取」
+            credential = session.credential()
+        finally:
+            session.close()
+        if credential:
+            self._api_key_text = credential
+            self._build_ui()
+
+    def _login_with_embedded(self, platform: PlatformType) -> None:
+        """兜底:内嵌浏览器登录窗"""
         from .login_window import LoginWindow
 
         win = LoginWindow(platform, self)
@@ -471,6 +499,33 @@ class DetailWindow(QDialog):
         self._config_instance_id = None
         self._api_key_text = ""
         self._build_ui()
+
+
+class _WaitLoginDialog(QDialog):
+    """提示用户:浏览器已打开,登录完点「完成并提取」"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        i18n = get_i18n()
+        self.setWindowTitle(i18n.t("login.title", ""))
+        self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        label = QLabel(i18n.t("login.browserHint"))
+        label.setWordWrap(True)
+        label.setStyleSheet("font-size:13px;")
+        layout.addWidget(label)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = QPushButton(i18n.t("common.cancel"))
+        cancel.clicked.connect(self.reject)
+        row.addWidget(cancel)
+        done = QPushButton(i18n.t("login.complete"))
+        done.setDefault(True)
+        done.clicked.connect(self.accept)
+        row.addWidget(done)
+        layout.addLayout(row)
+        self.resize(420, 150)
 
 
 def _config_i18n_keys(platform: PlatformType) -> tuple[str, str]:

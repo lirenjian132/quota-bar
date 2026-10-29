@@ -49,6 +49,12 @@ def ensure_webengine() -> None:
     globals()["QWebEngineView"] = QWebEngineView
     _webengine_ready = True
 
+#: 现代 Chrome UA(PyQt5 内置 Chromium 版本较老,需伪装)
+_MODERN_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
 #: 各平台的登录页与凭据提取契约
 _LOGIN_URLS = {
     PlatformType.STEPFUN: "https://platform.stepfun.com/",
@@ -75,6 +81,7 @@ class LoginWindow(QDialog):
 
         bottom = QHBoxLayout()
         hint = QLabel(i18n.t("login.hint"))
+        self._status = hint
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#666; font-size:12px; padding:6px 8px;")
         bottom.addWidget(hint, 1)
@@ -91,6 +98,9 @@ class LoginWindow(QDialog):
         self._profile = QWebEngineProfile(self)
         self._profile.setPersistentCookiesPolicy(QWebEngineProfile.NoPersistentCookies)
         self._profile.setHttpCacheType(QWebEngineProfile.MemoryHttpCache)
+        # PyQt5 5.15 自带的 Chromium 是 87 版(2021),站点的 UA 判断会走老 polyfill 分支
+        # 而报 Next.js 客户端异常。伪装成现代 Chrome 让站点加载正确的资源包。
+        self._profile.setHttpUserAgent(_MODERN_UA)
         # 页面的 profile 不能直接换(Qt5 不支持),改用 cookie 隔离:
         # 独立 profile 的 page 才有自己的 cookie 罐
         page = QWebEnginePage(self._profile, self)
@@ -99,6 +109,22 @@ class LoginWindow(QDialog):
         url = _LOGIN_URLS.get(platform)
         if url:
             self._view.load(QUrl(url))
+        self._view.loadFinished.connect(self._on_load_finished)
+
+    def _on_load_finished(self, ok: bool) -> None:
+        # 站点脚本报错时给出明确提示(内置 Chromium 版本偏老时常见)
+        if self._page_failed():
+            self._status.setText(get_i18n().t("login.webengineTooOld"))
+            self._status.setStyleSheet("color:#c0392b; font-size:12px; padding:6px 8px;")
+
+    def _page_failed(self) -> bool:
+        # 页面是否是站点的报错页(Application error 等)
+        try:
+            html = self._view.page().toHtml()
+        except Exception:
+            return False
+        markers = ("Application error", "client-side exception", "Internal Server Error")
+        return any(m in html for m in markers)
 
     def closeEvent(self, event) -> None:
         # 先销毁 page 再让 profile 析构,否则 Qt 会警告 profile 提前释放
