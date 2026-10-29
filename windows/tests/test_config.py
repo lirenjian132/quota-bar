@@ -206,3 +206,12 @@ def test_overlay_settings_roundtrip(tmp_path):
     # 脏数据容错:非二元组视为无位置
     cfg2._settings["globals"]["overlay_pos"] = "garbage"
     assert cfg2.overlay_pos() is None
+
+
+def test_tray_icon_default_off_and_roundtrip(tmp_path):
+    """托盘图标默认关(面板已承载全部功能),可随时打开"""
+    cfg = ConfigService(home=str(tmp_path))
+    assert cfg.tray_icon_enabled() is False
+    cfg.set_tray_icon_enabled(True)
+    assert cfg.tray_icon_enabled() is True
+    assert ConfigService(home=str(tmp_path)).tray_icon_enabled() is True

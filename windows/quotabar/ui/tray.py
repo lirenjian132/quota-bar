@@ -105,8 +105,10 @@ class TrayApp(QObject):
     def _show_startup_bubble(self) -> None:
         """启动气泡:Windows 下新应用的托盘图标可能落进「^」折叠区,弹一次让用户发现图标。
 
-        图标本就可见时也无副作用;没有任何图标(无账号)时无从提示,跳过。
+        托盘图标关闭时无从提示(面板常驻可见),跳过。
         """
+        if not self.config.tray_icon_enabled():
+            return
         for tray in self._trays.values():
             tray.showMessage(get_i18n().t("app.name"), _STARTUP_MESSAGE(), msecs=5000)
             return
@@ -210,6 +212,7 @@ class TrayApp(QObject):
         """按钉选状态重建图标集合,并刷新所有图标内容。
 
         有钉选实例:每个实例一个图标(顺序=注册表顺序);无钉选:单个主图标显示激活实例。
+        托盘图标可在配置里整体关闭(面板已能承担全部功能)。
         """
         instances = self.config.instances()
         pinned = [it for it in instances if self.config.is_pinned(it.id) and self.config.is_enabled(it.id)]
@@ -219,6 +222,15 @@ class TrayApp(QObject):
             # 无钉选(含零账号)时都保留单个主图标;零账号时 instance_id 为 None,
             # 图标显示灰色 "--",否则托盘里什么都看不到,连添加账号的入口都找不到
             wanted = [(_MAIN_ICON_KEY, self.config.active_instance_id())]
+
+        if not self.config.tray_icon_enabled():
+            # 托盘图标关闭:清掉已创建的图标,面板继续显示
+            for key in list(self._trays.keys()):
+                icon = self._trays.pop(key)
+                self._icon_instance.pop(key, None)
+                icon.hide()
+                icon.deleteLater()
+            return
 
         wanted_keys = {key for key, _ in wanted}
         for key in [k for k in self._trays if k not in wanted_keys]:
@@ -359,6 +371,12 @@ class TrayApp(QObject):
         overlay_act.setCheckable(True)
         overlay_act.setChecked(cfg.overlay_enabled())
         overlay_act.triggered.connect(lambda checked=False: self._toggle_overlay(checked))
+
+        # 托盘图标开关(默认关:面板已承载全部功能,托盘图标只算备用入口)
+        tray_act = menu.addAction(i18n.t("menu.trayIcon"))
+        tray_act.setCheckable(True)
+        tray_act.setChecked(cfg.tray_icon_enabled())
+        tray_act.triggered.connect(lambda checked=False: self._toggle_tray_icon(checked))
         menu.addSeparator()
 
         # 刷新间隔 ▸(互斥;改后重置定时器)
@@ -472,6 +490,11 @@ class TrayApp(QObject):
             self._overlay.show()
         else:
             self._overlay.hide()
+
+    def _toggle_tray_icon(self, checked: bool) -> None:
+        """托盘图标开关:关闭后托盘区不再有图标,面板与详情窗照常"""
+        self.config.set_tray_icon_enabled(checked)
+        self._rebuild_trays()
 
     def _set_display_mode(self, mode: str, sub: Optional[QMenu] = None) -> None:
         self.config.set_display_mode(mode)

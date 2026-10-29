@@ -116,5 +116,6 @@
   "login.complete": "Complete & Extract",
   "login.missing.title": "No login credentials detected",
   "login.missing.message": "No active session was detected. Finish signing in on the page first, then tap “Complete & Extract”.",
-  "menu.taskbarOverlay": "Taskbar overlay"
+  "menu.taskbarOverlay": "Taskbar overlay",
+  "menu.trayIcon": "Tray icon"
 }

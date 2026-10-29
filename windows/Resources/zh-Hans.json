@@ -116,5 +116,6 @@
   "login.complete": "完成并提取",
   "login.missing.title": "未检测到登录凭据",
   "login.missing.message": "尚未检测到登录状态，请先在网页中完成登录，再点「完成并提取」。",
-  "menu.taskbarOverlay": "任务栏数字面板"
+  "menu.taskbarOverlay": "任务栏数字面板",
+  "menu.trayIcon": "托盘图标"
 }

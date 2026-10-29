@@ -390,6 +390,23 @@ class ConfigService:
             self._settings["globals"]["active_instance_id"] = instance_id
             self._save_settings()
 
+    # ------------------------------------------------------------ 托盘图标
+
+    def tray_icon_enabled(self) -> bool:
+        """托盘图标开关,默认关。
+
+        任务栏面板已承载全部功能(显示/左键详情/右键菜单/退出),
+        托盘图标只是备用入口,常驻反而占地方(Windows 常把它挤进「^」折叠区,
+        还会留下被杀进程清理不掉的残影)。
+        """
+        with self._lock:
+            return bool(self._settings["globals"].get("tray_icon_enabled", False))
+
+    def set_tray_icon_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._settings["globals"]["tray_icon_enabled"] = enabled
+            self._save_settings()
+
     # ------------------------------------------------------------ 任务栏数字面板(overlay)
 
     def overlay_enabled(self) -> bool:
