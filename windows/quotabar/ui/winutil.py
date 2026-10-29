@@ -36,8 +36,35 @@ def taskbar_top_edge(screen_geo) -> Optional[int]:
     rect = taskbar_rect()
     if rect is None:
         return None
-    overlaps_x = rect.left < screen_geo.right() and rect.right() > screen_geo.left()
+    overlaps_x = rect.left < screen_geo.right() and rect.right > screen_geo.left()
     at_bottom = rect.top > screen_geo.center().y()
     if overlaps_x and at_bottom:
         return rect.top
     return None
+
+
+def ensure_topmost(hwnd) -> bool:
+    """把窗口提到最前(HWND_TOPMOST)。
+
+    必须修:Windows 任务栏(Shell_TrayWnd)本身是 topmost 窗口,普通的
+    Qt.Tool + WindowStaysOnTopHint 窗口会被它压在下面,面板直接"消失"。
+    这里显式重设 topmost 才能保证面板始终浮在任务栏之上可见。
+    """
+    try:
+        user32 = ctypes.windll.user32
+        user32.SetWindowPos.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+        ]
+        user32.SetWindowPos.restype = ctypes.c_bool
+        user32.BringWindowToTop.argtypes = [ctypes.c_void_p]
+        SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE = 0x0002, 0x0001, 0x0010
+        HWND_TOPMOST = -1
+        ok = user32.SetWindowPos(
+            ctypes.c_void_p(hwnd), ctypes.c_void_p(HWND_TOPMOST),
+            0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+        user32.BringWindowToTop(ctypes.c_void_p(hwnd))
+        return bool(ok)
+    except Exception:
+        return False

@@ -16,13 +16,13 @@ from __future__ import annotations
 from collections import Counter
 from typing import Optional
 
-from PyQt5.QtCore import QPoint, QRect, Qt
+from PyQt5.QtCore import QPoint, QRect, QTimer, Qt
 from PyQt5.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QPainter
 from PyQt5.QtWidgets import QWidget
 
 from .. import render
 from ..models import PlatformInstance, PlatformType
-from .winutil import taskbar_rect
+from .winutil import ensure_topmost, taskbar_rect
 
 #: 面板尺寸(逻辑像素)
 BAR_HEIGHT = 26
@@ -102,7 +102,26 @@ class StatusOverlay(QWidget):
         self._press_win_pos: Optional[QPoint] = None # 按下时窗口位置
         self._dragging = False
         self._placed = False                         # 是否已定过位(默认或记忆)
+        # 置顶守护:任务栏本身是 topmost 窗口,不周期性重提,面板会被压到下面"消失"
+        self._topmost_timer = QTimer(self)
+        self._topmost_timer.timeout.connect(self._ensure_visible)
+        self._topmost_timer.start(3000)
         self.refresh()
+
+    def _ensure_visible(self) -> None:
+        """周期性把窗口提到最前,并校正跑偏的位置"""
+        if not self.isVisible():
+            return
+        ensure_topmost(int(self.winId()))
+        self._realign_if_needed()
+
+    def _realign_if_needed(self) -> None:
+        """位置失效(任务栏移动/分辨率变化/被拖出界)时拉回原位"""
+        remembered = self._tray.config.overlay_pos()
+        if remembered is None:
+            return
+        if (self.x(), self.y()) != remembered:
+            self.move(*remembered)
 
     # ------------------------------------------------------------ 数据与布局
 
@@ -118,6 +137,8 @@ class StatusOverlay(QWidget):
             pos = self._tray.config.overlay_pos()
             if pos is not None:
                 self.move(*pos)
+        # 提到最前:任务栏是 topmost 窗口,不提就被压在下面看不见
+        ensure_topmost(int(self.winId()))
 
     def overlay_instances(self) -> list[PlatformInstance]:
         return [it for it in self._tray.config.instances() if self._tray.config.is_enabled(it.id)]

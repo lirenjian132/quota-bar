@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Callable, Optional
 
 from PyQt5.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
-from PyQt5.QtGui import QColor, QCursor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
+from PyQt5.QtGui import QColor, QCursor, QDesktopServices, QIcon, QPainter, QPixmap
 from PyQt5.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QSystemTrayIcon
 
 from .. import __version__, render
@@ -42,10 +42,7 @@ _STATUS_COLORS = {
     render.COLOR_YELLOW: "#FFCC00",
     render.COLOR_GREEN: "#34C759",
 }
-_BADGE_TEXT_COLOR = "#FFFFFF"  # 徽章上的数字用白字
 _ICON_SIZE = 32                # 托盘图标画布
-_ICON_TEXT_SIZE = 14           # 徽章数字字号(≤3 字符)
-_ICON_TEXT_SIZE_SMALL = 11     # 徽章数字字号(>3 字符,如余额 1.2K)
 _MAIN_ICON_KEY = "__main__"    # 无钉选实例时单个主图标的字典 key
 _RELEASES_URL = "https://github.com/lirenjian132/quota-bar/releases"
 
@@ -256,11 +253,13 @@ class TrayApp(QObject):
         return render.filter_metrics(data.metrics if data else [], self.config.enabled_metrics(instance_id))
 
     def _make_icon(self, instance_id: Optional[str]) -> QIcon:
-        """画 32x32 圆形徽章:底色=状态色,中间白字主指标数值;无实例显示灰 "--" """
+        """托盘图标:纯状态色圆点,不画数字。
+
+        数字由任务栏数字面板承载(16px 图标里塞数字既看不清又与面板重复);
+        托盘只留一个安静的状态点,tooltip 里给出各账号的数值。
+        """
         data = self._data.get(instance_id) if instance_id else None
-        metrics = self._visible_metrics(instance_id)
         badge_color = QColor(_STATUS_COLORS.get(render.status_color(data), _STATUS_COLORS[render.COLOR_GRAY]))
-        text = render.tray_text(metrics[0], self.config.display_mode()) if metrics else "--"
 
         pixmap = QPixmap(_ICON_SIZE, _ICON_SIZE)
         pixmap.fill(Qt.transparent)
@@ -269,20 +268,17 @@ class TrayApp(QObject):
             painter.setRenderHint(QPainter.Antialiasing)
             painter.setBrush(badge_color)
             painter.setPen(Qt.NoPen)
-            painter.drawEllipse(1, 1, _ICON_SIZE - 2, _ICON_SIZE - 2)
-            painter.setPen(QColor(_BADGE_TEXT_COLOR))
-            font = QFont()
-            font.setBold(True)
-            font.setWeight(QFont.Black)  # 加重笔画,缩到 16px 托盘尺寸后仍可辨
-            font.setPixelSize(_ICON_TEXT_SIZE if len(text) <= 3 else _ICON_TEXT_SIZE_SMALL)
-            painter.setFont(font)
-            painter.drawText(0, 0, _ICON_SIZE, _ICON_SIZE, int(Qt.AlignCenter), text)
+            # 内缩留边,缩小到 16px 后仍是个饱满的圆点
+            painter.drawEllipse(3, 3, _ICON_SIZE - 6, _ICON_SIZE - 6)
         finally:
             painter.end()
         return QIcon(pixmap)
 
     def _make_tooltip(self) -> str:
-        """多行 tooltip:所有已启用账号的「显示名 + 主要指标值」,第二指标附在括号里"""
+        """多行 tooltip:所有已启用账号的「显示名 + 主要指标值」,第二指标附在括号里
+
+        托盘图标已改为纯状态点,数值明细全部由这里承载。
+        """
         i18n = get_i18n()
         mode = self.config.display_mode()
         lines: list[str] = []
@@ -291,8 +287,10 @@ class TrayApp(QObject):
                 continue
             metrics = self._visible_metrics(inst.id)
             primary = render.tray_text(metrics[0], mode) if metrics else "--"
+            if metrics and metrics[0].unit == "%":
+                primary = f"{primary}%"
             line = f"{inst.display_name}: {primary}"
-            if len(metrics) > 1:  # 图标里只放得下主指标,第二指标放 tooltip
+            if len(metrics) > 1:  # 第二指标放 tooltip
                 second = metrics[1]
                 key = f"metric.{second.label}"
                 title = i18n.t(key)
