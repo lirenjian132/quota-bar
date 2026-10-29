@@ -56,7 +56,16 @@ _PLATFORM_INITIAL = {
 }
 
 #: 状态色(数字用)
+#: 状态色(浅底浮窗用深一档,保证对比度;面板在任务栏上用亮色版)
 _STATUS_QCOLOR = {
+    render.COLOR_GRAY: QColor("#6E7784"),
+    render.COLOR_RED: QColor("#D32F2F"),
+    render.COLOR_YELLOW: QColor("#B87700"),
+    render.COLOR_GREEN: QColor("#1E9E3E"),
+}
+
+#: 任务栏面板上的亮色版状态色
+_STATUS_QCOLOR_BRIGHT = {
     render.COLOR_GRAY: QColor("#8E8E93"),
     render.COLOR_RED: QColor("#FF453A"),
     render.COLOR_YELLOW: QColor("#FFD60A"),
@@ -120,13 +129,17 @@ class _TooltipWindow(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        # 卡片容器:背景/圆角/描边都在它身上
+        # 卡片容器:浅色底 + 深色字(对标 TrafficMonitor 的白底信息框)。
+        # 选择器用 #tipCard 精确限定:写成 QFrame 会让 border 被所有子控件继承,
+        # 结果每个单元格都出现一圈框线。
         self._frame = QFrame(self)
+        self._frame.setObjectName("tipCard")
         self._frame.setAttribute(Qt.WA_StyledBackground, True)
         self._frame.setStyleSheet(
-            "QFrame { background-color: rgba(28, 30, 36, 244);"
-            " border: 1px solid rgba(255, 255, 255, 34);"
+            "QFrame#tipCard { background-color: rgba(247, 248, 250, 246);"
+            " border: 1px solid rgba(120, 130, 145, 90);"
             " border-radius: 10px; }"
+            "QLabel { border: none; background: transparent; }"
         )
         outer.addWidget(self._frame)
         self._grid = QGridLayout(self._frame)
@@ -162,21 +175,22 @@ class _TooltipWindow(QWidget):
                     line += 1  # 账号之间留一行空隙
                 acc_label = QLabel(acc)
                 acc_label.setStyleSheet(
-                    f"color:{acc_color}; font-size:12px; font-weight:bold; background:transparent;"
+                    f"color:{acc_color}; font-size:12px; font-weight:bold;"
+                    " border: none; background: transparent;"
                 )
                 self._grid.addWidget(acc_label, line, 0, Qt.AlignLeft | Qt.AlignVCenter)
                 last_acc = acc
 
             m = QLabel(metric)
-            m.setStyleSheet("color:#98A2B0; font-size:11px; background:transparent;")
+            m.setStyleSheet("color:#5A6270; font-size:11px; border: none; background: transparent;")
             self._grid.addWidget(m, line, 1, Qt.AlignLeft | Qt.AlignVCenter)
 
             v = QLabel(value)
-            v.setStyleSheet("color:#FFFFFF; font-size:13px; font-weight:bold; background:transparent;")
+            v.setStyleSheet("color:#1E2430; font-size:13px; font-weight:bold; border: none; background: transparent;")
             self._grid.addWidget(v, line, 2, Qt.AlignRight | Qt.AlignVCenter)
 
             e = QLabel(extra)
-            e.setStyleSheet("color:#6E7784; font-size:10px; background:transparent;")
+            e.setStyleSheet("color:#8A93A0; font-size:10px; border: none; background: transparent;")
             self._grid.addWidget(e, line, 3, Qt.AlignLeft | Qt.AlignVCenter)
             line += 1
 
@@ -444,7 +458,9 @@ class StatusOverlay(QWidget):
             if self._tray.is_loading(inst.id) and not metrics:
                 text = "…"
             label = labels.get(inst.id, "?")
-            color = _STATUS_QCOLOR.get(render.status_color(data), _STATUS_QCOLOR[render.COLOR_GRAY])
+            color = _STATUS_QCOLOR_BRIGHT.get(
+                render.status_color(data), _STATUS_QCOLOR_BRIGHT[render.COLOR_GRAY]
+            )
 
             label_font = self._label_font()
             num_font = self._num_font(text)

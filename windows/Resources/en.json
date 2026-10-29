@@ -121,5 +121,6 @@
   "menu.overlayPosition": "Panel position",
   "menu.overlayPosition.left": "Taskbar left",
   "menu.overlayPosition.right": "Next to tray",
-  "menu.overlayEmbedded": "Embed in taskbar (experimental)"
+  "menu.overlayEmbedded": "Embed in taskbar (experimental)",
+  "login.browser": "Sign in via browser"
 }

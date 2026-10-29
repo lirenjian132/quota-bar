@@ -41,10 +41,45 @@ def _acquire_single_instance_lock(app) -> bool:
     return True
 
 
+def _install_crash_guard() -> None:
+    """异常兜底:写日志而不是让 Qt 弹崩溃对话框。
+
+    Qt 事件处理器里抛异常时,PyQt 会触发 abort(),Windows 弹出"程序已停止工作"
+    对话框——对使用者是莫名其妙的错误弹窗。这里统一捕获并记到日志。
+    """
+    import traceback
+
+    log_path = os.path.join(
+        os.environ.get("APPDATA", os.path.expanduser("~")), "QuotaBar", "error.log"
+    )
+
+    def handler(exc_type, exc_value, exc_tb):
+        try:
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+                f.write("\n")
+        except Exception:
+            pass
+
+    sys.excepthook = handler
+
+
 def main() -> int:
     _fix_qt_plugin_path()
+    _install_crash_guard()
 
+    from PyQt5.QtCore import Qt
     from PyQt5.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
+
+    # WebEngine 必须在 QApplication 创建前导入,并开启共享 OpenGL 上下文
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
+    try:
+        from quotabar.ui.login_window import ensure_webengine
+
+        ensure_webengine()
+    except Exception:
+        pass  # 缺 WebEngine 时只是没有一键登录功能,不影响其它功能
 
     from quotabar.config import ConfigService
     from quotabar.i18n import get_i18n

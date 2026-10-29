@@ -413,6 +413,14 @@ class DetailWindow(QDialog):
 
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
+        # cookie 型平台:给「浏览器登录取凭据」入口(免去手抄 cookie)
+        if inst.platform_type.cookie_based():
+            browser_btn = QPushButton(i18n.t("login.browser"))
+            browser_btn.setToolTip(i18n.t("login.hint"))
+            browser_btn.clicked.connect(
+                lambda checked=False, p=inst.platform_type: self._open_login(p)
+            )
+            buttons.addWidget(browser_btn)
         cancel = QPushButton(i18n.t("common.cancel"))
         cancel.clicked.connect(self._cancel_config)
         buttons.addWidget(cancel)
@@ -422,6 +430,17 @@ class DetailWindow(QDialog):
         buttons.addWidget(save)
         buttons.addStretch(1)
         self._root.addLayout(buttons)
+
+    def _open_login(self, platform: PlatformType) -> None:
+        """打开内嵌浏览器登录窗,登录完成后把凭据填进配置框"""
+        from .login_window import LoginWindow
+
+        win = LoginWindow(platform, self)
+        if win.exec_() == QDialog.Accepted:
+            credential = win.credential()
+            if credential:
+                self._api_key_text = credential
+                self._build_ui()
 
     def _open_config(self, instance_id: Optional[str]) -> None:
         if not instance_id:
