@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QCursor, QGuiApplication
+from PyQt5.QtCore import QMimeData, Qt, pyqtSignal
+from PyQt5.QtGui import QCursor, QGuiApplication, QDrag
 from PyQt5.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -174,20 +174,31 @@ class DetailWindow(QDialog):
     # ------------------------------------------------------------ 账号切换区
 
     def _build_account_switcher(self) -> QWidget:
+        """账号切换区:标签可**拖拽排序**(按住标签拖到另一个标签上松手即交换顺序)。"""
+        self._reorder_area = _ReorderArea(self)
+        self._reorder_area.reorder_requested.connect(self._reorder)
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         active_id = self._config.active_instance_id()
         for inst in self._config.instances():
-            btn = QPushButton(inst.display_name)
+            btn = _ReorderButton(inst.id, inst.display_name)
             btn.setCheckable(True)
             btn.setChecked(inst.id == active_id)
-            btn.setToolTip(inst.display_name)
+            btn.setToolTip(self._i18n.t("detail.dragToReorder"))
             btn.clicked.connect(lambda checked=False, iid=inst.id: self._switch_account(iid))
-            row.addWidget(btn)
-        row.addStretch(1)  # 账号多时允许横向挤压,不换行
-        box = QWidget()
-        box.setLayout(row)
-        return box
+            self._reorder_area.layout().addWidget(btn)
+        self._reorder_area.layout().addStretch(1)  # 账号多时允许横向挤压
+        return self._reorder_area
+
+    def _reorder(self, source_id: str, target_id: str) -> None:
+        """把 source 账号移动到 target 的位置(拖拽排序)"""
+        ids = [i.id for i in self._config.instances()]
+        if source_id not in ids or target_id not in ids or source_id == target_id:
+            return
+        ids.remove(source_id)
+        ids.insert(ids.index(target_id), source_id)
+        self._config.reorder_instances(ids)
+        self._build_ui()
 
     def _switch_account(self, instance_id: str) -> None:
         self._config.set_active_instance_id(instance_id)
@@ -499,6 +510,56 @@ class DetailWindow(QDialog):
         self._config_instance_id = None
         self._api_key_text = ""
         self._build_ui()
+
+
+class _ReorderButton(QPushButton):
+    """可拖拽的账号标签:按住拖动超过阈值即进入拖拽(短按仍是切换账号)。"""
+
+    def __init__(self, instance_id: str, text: str, parent=None):
+        super().__init__(text, parent)
+        self.instance_id = instance_id
+        self._press_pos = None
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._press_pos = event.globalPos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._press_pos is not None and (event.buttons() & Qt.LeftButton):
+            if (event.globalPos() - self._press_pos).manhattanLength() > 8:
+                mime = QMimeData()
+                mime.setText(self.instance_id)
+                drag = self.createDrag() if hasattr(self, "createDrag") else QDrag(self)
+                drag.setMimeData(mime)
+                drag.exec_(Qt.MoveAction)
+                self._press_pos = None
+                return
+        super().mouseMoveEvent(event)
+
+
+class _ReorderArea(QWidget):
+    """账号标签容器:接收拖放,放下时发 reorder_requested(源 id, 目标 id)。"""
+
+    reorder_requested = pyqtSignal(str, str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(row)
+
+    def dragEnterEvent(self, event) -> None:
+        event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        source_id = event.mimeData().text()
+        target = self.childAt(event.pos())
+        target_id = getattr(target, "instance_id", None)
+        if source_id and target_id and source_id != target_id:
+            self.reorder_requested.emit(source_id, target_id)
+        event.acceptProposedAction()
 
 
 class _WaitLoginDialog(QDialog):

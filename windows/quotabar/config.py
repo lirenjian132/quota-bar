@@ -139,6 +139,20 @@ class ConfigService:
                 for it in self._settings["instances"]
             ]
 
+    def registration_order(self) -> list[PlatformInstance]:
+        """按**注册顺序**(实例 id 的数字后缀)列出账号。
+
+        账号编号(M1/M2…)跟账号走,不随显示位置变:主力永远 M1、备用永远 M2,
+        调整顺序时编号不变——与 macOS 版一致。
+        """
+        import re
+
+        def key(inst: PlatformInstance):
+            m = re.search(r"-(\d+)$", inst.id)
+            return int(m.group(1)) if m else 0
+
+        return sorted(self.instances(), key=key)
+
     def instance(self, instance_id: str) -> Optional[PlatformInstance]:
         for it in self.instances():
             if it.id == instance_id:
@@ -222,6 +236,15 @@ class ConfigService:
             self._keys.pop(instance_id, None)
             self._save_settings()
             self._save_keys()
+
+    def reorder_instances(self, ordered_ids: list[str]) -> None:
+        """按给定顺序重排账号(拖拽排序用)。未列出的账号保持在后面。"""
+        with self._lock:
+            by_id = {it["id"]: it for it in self._settings["instances"]}
+            rest = [it for it in self._settings["instances"] if it["id"] not in ordered_ids]
+            new_order = [by_id[i] for i in ordered_ids if i in by_id] + rest
+            self._settings["instances"] = new_order
+            self._save_settings()
 
     def move_instance(self, instance_id: str, offset: int) -> None:
         """排序:-1 左移 / +1 右移;越界不动"""
@@ -433,13 +456,28 @@ class ConfigService:
             self._save_settings()
 
     def overlay_embedded(self) -> bool:
-        """是否嵌入任务栏(True=真·任务栏元素;False=浮层)。默认嵌入。"""
+        """是否嵌入任务栏(真·任务栏子窗口)。
+
+        默认关:Qt 窗口被 SetParent 到 explorer 任务栏后不稳定(会崩溃、
+        鼠标事件收不到)。默认走「浮层 + 任务栏同色底 + 无边框 + 贴任务栏内居中」,
+        视觉上与嵌入完全一致,交互稳定,还能拖拽换位置。
+        """
         with self._lock:
             return bool(self._settings["globals"].get("overlay_embedded", False))
 
     def set_overlay_embedded(self, embedded: bool) -> None:
         with self._lock:
             self._settings["globals"]["overlay_embedded"] = embedded
+            self._save_settings()
+
+    def show_percent(self) -> bool:
+        """是否在面板数值后显示 % 号(对标 TrafficMonitor 的「不显示百分号」)"""
+        with self._lock:
+            return bool(self._settings["globals"].get("show_percent", True))
+
+    def set_show_percent(self, show: bool) -> None:
+        with self._lock:
+            self._settings["globals"]["show_percent"] = show
             self._save_settings()
 
     def overlay_anchor(self) -> str:

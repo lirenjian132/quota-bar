@@ -124,5 +124,7 @@
   "menu.overlayEmbedded": "嵌入任务栏(实验)",
   "login.browser": "浏览器登录取凭据",
   "login.webengineTooOld": "内置浏览器版本偏旧，该站点无法在此登录。请改用系统浏览器登录后，在账号配置框手动粘贴 cookie。",
-  "login.browserHint": "已在新打开的浏览器窗口里登录。登录完成后回到这里点「完成并提取」，程序会自动读取登录凭据。"
+  "login.browserHint": "已在新打开的浏览器窗口里登录。登录完成后回到这里点「完成并提取」，程序会自动读取登录凭据。",
+  "detail.dragToReorder": "按住标签拖到别的位置可调整顺序",
+  "menu.showPercent": "显示百分号"
 }

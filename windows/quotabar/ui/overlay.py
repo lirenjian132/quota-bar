@@ -102,12 +102,20 @@ def _taskbar_is_light() -> bool:
         return False
 
 
-def account_initials(instances: list[PlatformInstance]) -> dict[str, str]:
-    """账号短标签:平台首字母;同平台多账号加序号(M1/M2),单账号不带号(G/S/J)"""
-    totals = Counter(_PLATFORM_INITIAL[i.platform_type] for i in instances)
+def account_initials(
+    instances: list[PlatformInstance],
+    numbering_order: Optional[list[PlatformInstance]] = None,
+) -> dict[str, str]:
+    """账号短标签:平台首字母;同平台多账号加序号(M1/M2),单账号不带号(G/S/J)。
+
+    序号按**注册顺序**给(numbering_order),不随显示位置变——
+    调整顺序时主力仍是 M1、备用仍是 M2(与 macOS 版一致)。
+    """
+    order = numbering_order if numbering_order is not None else instances
+    totals = Counter(_PLATFORM_INITIAL[i.platform_type] for i in order)
     seen: Counter = Counter()
     labels: dict[str, str] = {}
-    for inst in instances:
+    for inst in order:
         base = _PLATFORM_INITIAL[inst.platform_type]
         seen[base] += 1
         labels[inst.id] = base if totals[base] == 1 else f"{base}{seen[base]}"
@@ -302,7 +310,8 @@ class StatusOverlay(QWidget):
         if host is None:
             return
         self._embed_host = host
-        # 嵌入后不再用 alpha 透明(child window 不支持 layered),改用不透明底色
+        # 嵌入后不能再用 alpha 透明(child window 不支持 layered):
+        # 底色取任务栏实际颜色,视觉上与任务栏融为一体
         self.setAttribute(Qt.WA_TranslucentBackground, False)
         self._bg_color = get_taskbar_bg_color()
         self._place()
@@ -414,9 +423,13 @@ class StatusOverlay(QWidget):
         data = self._tray.data(inst.id)
         metrics = self._tray._visible_metrics(inst.id)
         text = render.tray_text(metrics[0], self._tray.config.display_mode()) if metrics else "--"
+        if self._tray.config.show_percent() and metrics and metrics[0].unit == "%":
+            text = f"{text}%"
         if self._tray.is_loading(inst.id) and not metrics:
             text = "…"
-        label = account_initials(self.overlay_instances()).get(inst.id, "?")
+        label = account_initials(
+            self.overlay_instances(), self._tray.config.registration_order()
+        ).get(inst.id, "?")
         return label, text
 
     @staticmethod
@@ -440,7 +453,9 @@ class StatusOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         instances = self.overlay_instances()
-        labels = account_initials(instances)
+        labels = account_initials(
+            instances, self._tray.config.registration_order()
+        )
         self._chips = []
 
         # 铺满任务栏色:与任务栏融为一体(不透明窗口,鼠标命中按整个矩形)
@@ -454,9 +469,7 @@ class StatusOverlay(QWidget):
         for index, inst in enumerate(instances):
             data = self._tray.data(inst.id)
             metrics = self._tray._visible_metrics(inst.id)
-            text = render.tray_text(metrics[0], self._tray.config.display_mode()) if metrics else "--"
-            if self._tray.is_loading(inst.id) and not metrics:
-                text = "…"
+            _, text = self._chip_texts(inst)
             label = labels.get(inst.id, "?")
             color = _STATUS_QCOLOR_BRIGHT.get(
                 render.status_color(data), _STATUS_QCOLOR_BRIGHT[render.COLOR_GRAY]
@@ -570,7 +583,9 @@ class StatusOverlay(QWidget):
         i18n = get_i18n()
         mode = self._tray.config.display_mode()
         rows: list[tuple[str, str, str, str, str]] = []
-        labels = account_initials(self.overlay_instances())
+        labels = account_initials(
+            self.overlay_instances(), self._tray.config.registration_order()
+        )
         for inst in self.overlay_instances():
             data = self._tray.data(inst.id)
             # 全部指标(不是只显示勾选的那一两个)——用户要"放过去就看到全部数据"

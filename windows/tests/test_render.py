@@ -155,3 +155,23 @@ def test_account_initials():
     # 只有一个 MiniMax 时:M 不带序号
     solo = [PlatformInstance("minimax_cn-1", PlatformType.MINIMAX_CN, "x")]
     assert account_initials(solo) == {"minimax_cn-1": "M"}
+
+
+def test_account_initials_numbering_follows_registration_not_position():
+    """账号编号跟账号走:调整显示顺序后,主力仍是 M1、备用仍是 M2"""
+    from quotabar.models import PlatformInstance, PlatformType
+    from quotabar.ui.overlay import account_initials
+
+    main = PlatformInstance("minimax_cn-2", PlatformType.MINIMAX_CN, "主力")
+    backup = PlatformInstance("minimax_cn-3", PlatformType.MINIMAX_CN, "备用")
+    glm = PlatformInstance("glm_cn-1", PlatformType.GLM_CN, "GLM")
+
+    # 注册顺序:主力在前
+    registration = [main, backup, glm]
+    # 显示顺序被调成 备用在前
+    display = [backup, main, glm]
+
+    labels = account_initials(display, registration)
+    assert labels["minimax_cn-2"] == "M1"   # 主力仍是 M1
+    assert labels["minimax_cn-3"] == "M2"   # 备用仍是 M2
+    assert labels["glm_cn-1"] == "G"

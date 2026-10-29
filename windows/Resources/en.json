@@ -124,5 +124,7 @@
   "menu.overlayEmbedded": "Embed in taskbar (experimental)",
   "login.browser": "Sign in via browser",
   "login.webengineTooOld": "The embedded browser is too old for this site. Please sign in with your normal browser and paste the cookie into the config field.",
-  "login.browserHint": "Sign in in the newly opened browser window, then come back here and click \"Done & extract\" — the app will read the credentials automatically."
+  "login.browserHint": "Sign in in the newly opened browser window, then come back here and click \"Done & extract\" — the app will read the credentials automatically.",
+  "detail.dragToReorder": "Drag a label onto another to reorder",
+  "menu.showPercent": "Show percent sign"
 }

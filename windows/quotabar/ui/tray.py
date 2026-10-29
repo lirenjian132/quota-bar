@@ -389,6 +389,12 @@ class TrayApp(QObject):
         embed_act.setChecked(cfg.overlay_embedded())
         embed_act.triggered.connect(lambda checked=False: self._toggle_overlay_embedded(checked))
 
+        # 百分号开关(对标 TrafficMonitor 的「不显示百分号」)
+        pct_act = menu.addAction(i18n.t("menu.showPercent"))
+        pct_act.setCheckable(True)
+        pct_act.setChecked(cfg.show_percent())
+        pct_act.triggered.connect(lambda checked=False: self._toggle_show_percent(checked))
+
         # 托盘图标开关(默认关:面板已承载全部功能,托盘图标只算备用入口)
         tray_act = menu.addAction(i18n.t("menu.trayIcon"))
         tray_act.setCheckable(True)
@@ -515,6 +521,11 @@ class TrayApp(QObject):
         else:
             self._overlay.refresh()
             self._overlay.show()
+        self._overlay.refresh()
+
+    def _toggle_show_percent(self, checked: bool) -> None:
+        """面板数值是否带 % 号"""
+        self.config.set_show_percent(checked)
         self._overlay.refresh()
 
     def _toggle_tray_icon(self, checked: bool) -> None:
