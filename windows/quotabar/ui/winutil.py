@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes as wintypes
 from typing import Optional
 
 
@@ -260,15 +261,69 @@ def move_in_parent(hwnd, x: int, y: int, width: int, height: int) -> bool:
         return False
 
 
+#: 这些窗口不该当作"要压过的对象":输入法候选窗、工具提示都是系统辅助窗口,
+#: 而且它们经常排在 Z 序最前,拿它们当 hWndInsertAfter 会导致插错位置
+_IGNORED_TOP_CLASSES = (
+    "IME",
+    "Default IME",
+    "MSCTFIME",
+    "tooltips_class32",
+    "Windows.UI.Core.CoreWindow",
+    "EdgeUiInputTopWndClass",
+)
+
+
+def _top_visible_window(exclude_hwnds=(), exclude_pid=None) -> Optional[int]:
+    """Z 序最前的"真实"可见窗口(排除输入法/提示框等系统辅助窗口,以及指定窗口)。
+
+    之前的 bug:GetTopWindow(None) 返回的常是 IME 窗口,拿它当插入位置,
+    结果浮窗插不到置顶应用(ZCode)之上,表现为"浮窗不出现"。
+    """
+    try:
+        user32 = ctypes.windll.user32
+        user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+        user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+        EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_ssize_t)
+        skip = {int(x) for x in exclude_hwnds if x}
+        found: list[int] = []
+
+        def cb(hwnd, _lparam):
+            if not user32.IsWindowVisible(ctypes.c_void_p(hwnd)):
+                return True
+            if int(hwnd) in skip:
+                return True
+            if exclude_pid is not None:
+                # 同进程的其他窗口(面板/浮窗)不能当插入目标:
+                # 插到"自己人"前面等于没插,压不住置顶应用
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(pid))
+                if pid.value == exclude_pid:
+                    return True
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(ctypes.c_void_p(hwnd), buf, 256)
+            name = buf.value
+            if any(p in name for p in _IGNORED_TOP_CLASSES):
+                return True
+            found.append(int(hwnd))
+            return False  # 停:EnumWindows 的枚举顺序就是 Z 序从顶到底
+
+        user32.EnumWindows(EnumWindowsProc(cb), 0)
+        return found[0] if found else None
+    except Exception:
+        return None
+
+
 def ensure_topmost(hwnd) -> bool:
     """把窗口提到 Z 序最前。
 
-    两件事都要做:
+    三件事都要做:
     1. 任务栏(Shell_TrayWnd)本身是 topmost 窗口,普通的 Qt.Tool + WindowStaysOnTopHint
        窗口会被它压在下面,面板直接"消失"——所以必须显式重设 topmost。
     2. 只设 HWND_TOPMOST 还不够:置顶应用(如 ZCode)也占着 topmost 最前,
-       单靠 HWND_TOPMOST 盖不住它。要拿到当前 Z 序最顶的窗口当 hWndInsertAfter,
+       单靠 HWND_TOPMOST 盖不住它。要拿到当前 Z 序最前的"真实"窗口当 hWndInsertAfter,
        把本窗口插到它前面(更靠前)。
+    3. 取"最前窗口"不能直接用 GetTopWindow(None)——它经常返回输入法(IME)候选窗,
+       插错位置导致浮窗依然被置顶应用盖住(表现为"浮窗不出现")。
     """
     try:
         user32 = ctypes.windll.user32
@@ -278,21 +333,26 @@ def ensure_topmost(hwnd) -> bool:
         ]
         user32.SetWindowPos.restype = ctypes.c_bool
         user32.BringWindowToTop.argtypes = [ctypes.c_void_p]
-        user32.GetTopWindow.argtypes = [ctypes.c_void_p]
-        user32.GetTopWindow.restype = ctypes.c_void_p
         SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE = 0x0002, 0x0001, 0x0010
+        SWP_SHOWWINDOW = 0x0040
         HWND_TOPMOST = -1
 
-        top = user32.GetTopWindow(None)
-        insert_after = top if top else ctypes.c_void_p(HWND_TOPMOST)
+        # 排除本进程的所有窗口:插到"自己人"前面等于没插,
+        # 结果依然被置顶应用(如 ZCode)盖住——而且置顶应用会抢走
+        # 该区域的鼠标消息,面板就完全收不到 hover/点击。
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(pid))
+        top = _top_visible_window(exclude_hwnds=(hwnd,), exclude_pid=pid.value)
+        insert_after = ctypes.c_void_p(top) if top else ctypes.c_void_p(HWND_TOPMOST)
+        # 带 SWP_SHOWWINDOW:目标窗口此刻若处于隐藏状态,没有这个标志就不会被显示
         ok = user32.SetWindowPos(
             ctypes.c_void_p(hwnd), insert_after,
-            0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
         )
         # 再补一次置顶,保证它留在 topmost 层里
         user32.SetWindowPos(
             ctypes.c_void_p(hwnd), ctypes.c_void_p(HWND_TOPMOST),
-            0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
         )
         user32.BringWindowToTop(ctypes.c_void_p(hwnd))
         return bool(ok)
@@ -300,7 +360,7 @@ def ensure_topmost(hwnd) -> bool:
         return False
 
 
-def is_covered_by_taskbar(hwnd, ignore_hwnds=()) -> bool:
+def is_covered_by_taskbar(hwnd, ignore_hwnds=(), exclude_pid=None) -> bool:
     """面板是否被更上层的窗口压在下面。
 
     判据:沿 Z 序向前找第一个与本窗口矩形相交、且不是自身的可见顶层窗口。
@@ -320,6 +380,8 @@ def is_covered_by_taskbar(hwnd, ignore_hwnds=()) -> bool:
             return False
 
         ignore = {int(x) for x in ignore_hwnds if x}
+        pid_self = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(pid_self))
         prev = user32.GetWindow(ctypes.c_void_p(hwnd), GW_HWNDPREV)
         checked = 0
         while prev and checked < 64:
@@ -328,6 +390,13 @@ def is_covered_by_taskbar(hwnd, ignore_hwnds=()) -> bool:
                 prev = user32.GetWindow(ctypes.c_void_p(prev), GW_HWNDPREV)
                 continue
             checked += 1
+            if exclude_pid is not None:
+                # 同进程窗口(自家浮窗/详情窗)不算遮挡者,否则互相抢 Z 序
+                pid_other = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(ctypes.c_void_p(prev), ctypes.byref(pid_other))
+                if pid_other.value == exclude_pid:
+                    prev = user32.GetWindow(ctypes.c_void_p(prev), GW_HWNDPREV)
+                    continue
             if prev != hwnd and int(prev) not in ignore:
                 r = RECT()
                 if user32.GetWindowRect(ctypes.c_void_p(prev), ctypes.byref(r)):
@@ -338,3 +407,37 @@ def is_covered_by_taskbar(hwnd, ignore_hwnds=()) -> bool:
     except Exception:
         return False
     return False
+
+
+def set_hit_region(hwnd, width: int, height: int) -> bool:
+    """给窗口设置命中区域(整个矩形)。
+
+    为什么需要:alpha 透明窗口(WS_EX_LAYERED + UpdateLayeredWindow)的鼠标命中
+    测试**按像素 alpha 判定**——alpha=0 的点会直接穿透到下层窗口。
+    我们的面板背景是全透明的(只有文字可见),鼠标停在文字旁的空隙时事件
+    就被下面的置顶应用(如 ZCode)抢走,hover/点击永远不生效。
+    设置 window region 后,命中只按 region 判定,整个面板都能接收鼠标。
+    """
+    try:
+        gdi32 = ctypes.windll.gdi32
+        user32 = ctypes.windll.user32
+        gdi32.CreateRectRgn.restype = ctypes.c_void_p
+        user32.SetWindowRgn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool]
+        region = gdi32.CreateRectRgn(0, 0, max(1, width), max(1, height))
+        ok = user32.SetWindowRgn(ctypes.c_void_p(hwnd), ctypes.c_void_p(region), True)
+        return bool(ok)
+    except Exception:
+        return False
+
+
+def show_window(hwnd) -> bool:
+    """强制显示窗口(SW_SHOW)。Qt 的 show() 在 translucent 窗口上偶尔不生效。"""
+    try:
+        user32 = ctypes.windll.user32
+        user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        user32.ShowWindow.restype = ctypes.c_bool
+        SW_SHOW = 5
+        user32.ShowWindow(ctypes.c_void_p(hwnd), SW_SHOW)
+        return bool(user32.IsWindowVisible(ctypes.c_void_p(hwnd)))
+    except Exception:
+        return False

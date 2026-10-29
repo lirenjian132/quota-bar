@@ -435,7 +435,7 @@ class ConfigService:
     def overlay_embedded(self) -> bool:
         """是否嵌入任务栏(True=真·任务栏元素;False=浮层)。默认嵌入。"""
         with self._lock:
-            return bool(self._settings["globals"].get("overlay_embedded", True))
+            return bool(self._settings["globals"].get("overlay_embedded", False))
 
     def set_overlay_embedded(self, embedded: bool) -> None:
         with self._lock:

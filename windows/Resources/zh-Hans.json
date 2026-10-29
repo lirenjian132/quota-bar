@@ -121,5 +121,5 @@
   "menu.overlayPosition": "面板位置",
   "menu.overlayPosition.left": "任务栏左端",
   "menu.overlayPosition.right": "靠通知区",
-  "menu.overlayEmbedded": "嵌入任务栏"
+  "menu.overlayEmbedded": "嵌入任务栏(实验)"
 }
