@@ -431,3 +431,24 @@ class ConfigService:
         with self._lock:
             self._settings["globals"]["overlay_pos"] = [int(pos[0]), int(pos[1])]
             self._save_settings()
+
+    def overlay_embedded(self) -> bool:
+        """是否嵌入任务栏(True=真·任务栏元素;False=浮层)。默认嵌入。"""
+        with self._lock:
+            return bool(self._settings["globals"].get("overlay_embedded", True))
+
+    def set_overlay_embedded(self, embedded: bool) -> None:
+        with self._lock:
+            self._settings["globals"]["overlay_embedded"] = embedded
+            self._save_settings()
+
+    def overlay_anchor(self) -> str:
+        """面板锚点:嵌入任务栏时靠哪一端("right" 靠通知区 / "left" 靠开始按钮)。"""
+        with self._lock:
+            anchor = self._settings["globals"].get("overlay_anchor", "right")
+            return anchor if anchor in ("left", "right") else "right"
+
+    def set_overlay_anchor(self, anchor: str) -> None:
+        with self._lock:
+            self._settings["globals"]["overlay_anchor"] = anchor
+            self._save_settings()

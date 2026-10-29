@@ -1,33 +1,49 @@
 # -*- coding: utf-8 -*-
 """任务栏数字面板(StatusOverlay):Windows 上 Mac 菜单栏的对等物。
 
-单行设计:「首字母(状态色) 数值(白色)」,如 M1 81 / M2 100:
+**嵌入任务栏**——不是浮在任务栏上方的悬浮层,而是任务栏自己的元素,
+像日期时间、网络图标那样是任务栏的一部分(Windows 的做法是 TaskbarBand:
+把窗口 SetParent 到 Shell_TrayWnd)。
+
+形态:每个账号一个小圆角方块,块内是百分比数字(状态色),横向并排。
 - 账号标签用平台首字母(M/G/S/J),同平台多账号加序号(M1、M2),不显示中文名
-- 首字母随额度变色(绿/黄/红/灰),数值恒为白色——标签提示是哪个号,数字才是主角
-- 字号放大、行距舒展,配淡色圆角底板;右下角空间充裕,不必挤成一小条
-- 不抢焦点(WA_ShowWithoutActivating + WindowDoesNotAcceptFocus),点别处不会导致它消失
-- 常驻置顶、可整体拖拽到任务栏任意位置(位置持久化),仅在真被任务栏盖住时才重新置顶
+- 数字随额度变色(绿/黄/红/灰)
+- 嵌入后不能靠 alpha 透明,方块底色取任务栏实际背景色采样后提亮,视觉上与任务栏融为一体
+- 悬停 tooltip 给出各账号明细;左键开详情窗;右键出完整菜单(含退出)
 """
 
 from __future__ import annotations
 
+import ctypes
 from collections import Counter
 from typing import Optional
 
 from PyQt5.QtCore import QPoint, QRect, QTimer, Qt
-from PyQt5.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QPainter
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter
+from PyQt5.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from .. import render
+from ..i18n import get_i18n
 from ..models import PlatformInstance, PlatformType
-from .winutil import ensure_topmost, is_covered_by_taskbar, taskbar_rect
+from .winutil import (
+    detach_from_taskbar,
+    embed_in_taskbar,
+    ensure_topmost,
+    find_notify_area,
+    find_taskbar_host,
+    get_taskbar_bg_color,
+    is_covered_by_taskbar,
+    move_in_parent,
+    taskbar_rect,
+)
 
-#: 面板尺寸(逻辑像素)
-BAR_HEIGHT = 34
-CHIP_H = 28
-#: 块间距(组与组之间的结构性分隔)
-CHIP_GAP = 20
-PADDING = 8
+#: 账号方块尺寸与间距(任务栏高 47px 内的紧凑块)
+BLOCK_W, BLOCK_H = 32, 30
+BLOCK_GAP = 4
+PADDING = 6
+
+#: 距任务栏右端(托盘区)的预留宽度
+_TRAY_RESERVE = 300
 
 #: 平台首字母(J = 基元律动 TokenRhythm)
 _PLATFORM_INITIAL = {
@@ -37,22 +53,7 @@ _PLATFORM_INITIAL = {
     PlatformType.TOKENRHYTHM: "J",
 }
 
-#: 深色任务栏配色(底板略深于任务栏,形成卡片感)
-_DARK = {
-    "plate": QColor(255, 255, 255, 16),
-    "edge": QColor(255, 255, 255, 28),
-    "text": QColor("#FFFFFF"),
-    "hover": QColor(255, 255, 255, 38),
-}
-#: 浅色任务栏配色
-_LIGHT = {
-    "plate": QColor(0, 0, 0, 18),
-    "edge": QColor(0, 0, 0, 28),
-    "text": QColor("#1E1E1E"),
-    "hover": QColor(0, 0, 0, 40),
-}
-
-#: 首字母用状态色(与托盘点同一套语义色)
+#: 状态色(数字用)
 _STATUS_QCOLOR = {
     render.COLOR_GRAY: QColor("#8E8E93"),
     render.COLOR_RED: QColor("#FF453A"),
@@ -60,17 +61,13 @@ _STATUS_QCOLOR = {
     render.COLOR_GREEN: QColor("#32D74B"),
 }
 
-#: 任务栏右侧托盘区预留宽度(面板默认位置避让"^"与托盘图标)
-_TRAY_RESERVE = 340
-
-#: 标签→数字间距
-_GAP_LABEL_NUM = 8
-_NUM_FONT_PT = 15
-_LABEL_FONT_PT = 11
+#: 字号
+_NUM_FONT_PT = 13
+_NUM_FONT_PT_SMALL = 10
 
 
 def _taskbar_is_light() -> bool:
-    """系统任务栏是否浅色主题(浅色时用深字,否则白字)"""
+    """系统任务栏是否浅色主题"""
     try:
         import winreg
 
@@ -96,56 +93,214 @@ def account_initials(instances: list[PlatformInstance]) -> dict[str, str]:
     return labels
 
 
+class _TooltipWindow(QWidget):
+    """自绘悬停浮窗。
+
+    Qt 自带的 QToolTip 依赖顶层窗口,嵌入任务栏的 child window 收不到,
+    这里自己画一个无边框小窗,样式也能自己控制。
+    """
+
+    def __init__(self) -> None:
+        super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self._label = QLabel(self)
+        self._label.setTextFormat(Qt.RichText)
+        self._label.setStyleSheet(
+            "background-color: rgba(30, 32, 38, 238);"
+            "color: #EDEDED;"
+            "border: 1px solid rgba(255, 255, 255, 36);"
+            "border-radius: 8px;"
+            "padding: 8px 11px;"
+            "font-size: 12px;"
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._label)
+
+    def show_text(self, html: str, global_pos: QPoint, rebuild: bool = True) -> None:
+        """在鼠标附近显示;下方空间不足时向上弹(任务栏在屏幕底部,必须向上)
+
+        rebuild=False 时只移动不重排文字(鼠标移动时避免宽度跳动)。
+        """
+        if rebuild or self._label.text() != html:
+            self._label.setText(html)
+            self.adjustSize()
+        screen = QGuiApplication.screenAt(global_pos) or QGuiApplication.primaryScreen()
+        geo = screen.availableGeometry() if screen else None
+        x = global_pos.x() + 14
+        y = global_pos.y() + 18
+        if geo is not None:
+            if x + self.width() > geo.right() - 8:
+                x = geo.right() - self.width() - 8
+            if y + self.height() > geo.bottom() - 8:
+                y = global_pos.y() - self.height() - 12  # 向上弹
+            if y < geo.top() + 8:
+                y = geo.top() + 8
+        self.move(x, y)
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+            # 置顶:置顶应用(如 ZCode)会盖住浮窗,提到 topmost 最前才看得见
+            ensure_topmost(int(self.winId()))
+
+
 class StatusOverlay(QWidget):
-    """任务栏常驻数字面板;数据/配置一律读 TrayApp,自身不取数。"""
+    """任务栏内的账号数字块组;数据/配置一律读 TrayApp,自身不取数。"""
 
     def __init__(self, tray):
-        super().__init__(
-            None,
-            Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus,
-        )
+        super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        # alpha 透明:方块之外完全透出任务栏,视觉上就是嵌在任务栏里的几个图标
         self.setAttribute(Qt.WA_TranslucentBackground)
-        # 显示但不激活:点面板/点别处都不改变焦点,也不会因此被重绘掉
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setMouseTracking(True)
         self._tray = tray
         self._chips: list[tuple[QRect, str]] = []    # [(QRect, instance_id)]
         self._hover_index = -1
-        self._press_pos: Optional[QPoint] = None     # 按下时光标全局位置
-        self._press_win_pos: Optional[QPoint] = None # 按下时窗口位置
-        self._dragging = False
-        self._placed = False                         # 是否已定过位(默认或记忆)
-        # 置顶守护:任务栏本身、以及 ZCode 这类置顶窗口都会盖住面板。
-        # 用 500ms 的轻量检测(仅 GetWindow + GetClassName)判断是否真被盖,
-        # 被盖才重新置顶——无条件 SetWindowPos 会让透明窗口闪一下。
+        self._embedded = False
+        self._bg_color = get_taskbar_bg_color()
+        self._tip = _TooltipWindow()
+        # 置顶守护:任务栏与置顶应用(如 ZCode)都会盖住面板,
+        # 用 500ms 轻量检测判断是否真被盖,被盖才重新置顶(避免透明窗口闪烁)
         self._topmost_timer = QTimer(self)
         self._topmost_timer.timeout.connect(self._ensure_visible)
         self._topmost_timer.start(500)
+        # 拖拽移动(位置持久化:想放左放右都行)
+        self._press_pos: Optional[QPoint] = None
+        self._press_win_pos: Optional[QPoint] = None
+        self._dragging = False
+        # 嵌入任务栏:真正成为任务栏的元素(不是浮在上面的图案)
+        self._embed_host: Optional[int] = None
         self.refresh()
 
     def _ensure_visible(self) -> None:
-        """仅在真被任务栏盖住时重新置顶(避免透明窗口周期性闪烁)"""
+        """守护:嵌入模式下探测 explorer 重启;浮层模式下被盖则提回最前"""
+        if self._embed_host is not None:
+            # explorer 重启后任务栏句柄会变,需要重新嵌入
+            if find_taskbar_host() != self._embed_host:
+                self._reattach()
+            return
         if not self.isVisible():
             return
-        if is_covered_by_taskbar(int(self.winId())):
+        # 排除自家浮窗:否则浮窗会被当成"遮挡者",两边每 500ms 抢 Z 序,表现为闪烁
+        ignore = [int(self._tip.winId())]
+        if is_covered_by_taskbar(int(self.winId()), ignore):
             ensure_topmost(int(self.winId()))
+
+    def _reattach(self) -> None:
+        """explorer 重启后重新嵌入任务栏"""
+        self._embed_host = None
+        self.attach()
+
+    def attach(self) -> None:
+        """尝试嵌入任务栏(真正成为任务栏的元素)。
+
+        顺序有讲究:先 show() 让 Qt 建好原生窗口,再外部改样式 + SetParent,
+        之后**绝不能再动 Qt 的窗口几何**(setFixedSize/move 会把嵌入冲掉),
+        定位一律走 Win32。
+        """
+        if self._embed_host is not None:
+            return
+        if not self._tray.config.overlay_embedded():
+            return
+        host = embed_in_taskbar(int(self.winId()))
+        if host is None:
+            return
+        self._embed_host = host
+        # 嵌入后不再用 alpha 透明(child window 不支持 layered),改用不透明底色
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self._bg_color = get_taskbar_bg_color()
+        self._place()
+
+    def detach(self) -> None:
+        """脱离任务栏,回到顶层置顶浮层"""
+        if self._embed_host is None:
+            return
+        self._embed_host = None
+        detach_from_taskbar(int(self.winId()))
+        self.setWindowFlags(
+            Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.show()
+        self._place()
+        ensure_topmost(int(self.winId()))
+
+    def _place(self) -> None:
+        """定位:嵌入模式走 Win32(父客户区坐标),浮层模式走 Qt 屏幕坐标。
+
+        嵌入模式下**不能**调 Qt 的 setFixedSize/move——那会把外部 SetParent 冲掉。
+        """
+        instances = self.overlay_instances()
+        width = PADDING * 2 + len(instances) * BLOCK_W + max(0, len(instances) - 1) * BLOCK_GAP
+        width = max(width, BLOCK_W + PADDING * 2)
+        height = BLOCK_H + 4
+
+        if self._embed_host is not None:
+            # 位置:靠通知区(TrayNotifyWnd)左侧 或 靠开始按钮右侧,按配置锚点
+            notify = find_notify_area(self._embed_host)
+            tb = taskbar_rect()
+            if tb is not None:
+                tb_w = tb.right - tb.left
+                tb_h = tb.bottom - tb.top
+                anchor = self._tray.config.overlay_anchor()
+                x = tb_w - width - _TRAY_RESERVE
+                if anchor == "left":
+                    x = 8  # 靠任务栏左端(开始按钮右侧)
+                elif notify:
+                    try:
+                        from .winutil import RECT
+
+                        nr = RECT()
+                        ctypes.windll.user32.GetWindowRect(
+                            ctypes.c_void_p(notify), ctypes.byref(nr)
+                        )
+                        x = (nr.left - tb.left) - width - 4
+                    except Exception:
+                        pass
+                y = max(0, (tb_h - height) // 2)
+                move_in_parent(int(self.winId()), x, y, width, height)
+            return
+
+        if self.width() != width or self.height() != height:
+            self.setFixedSize(width, height)
+
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        sgeo = screen.geometry()
+        tb = taskbar_rect()
+
+        remembered = self._tray.config.overlay_pos()
+        if remembered is not None:
+            # 记住的位置:必须 x 落在屏幕内、y 落在任务栏上,否则回默认
+            # (只校验 y 的话,拖到屏幕外的面板重启后永久失联)
+            x, y = remembered
+            x_ok = sgeo.left() <= x <= sgeo.right() - 40
+            y_ok = tb is not None and tb.top - 6 <= y <= tb.bottom + 6
+            if x_ok and y_ok:
+                self.move(x, y)
+                return
+
+        anchor = self._tray.config.overlay_anchor()
+        if tb is not None:
+            y = tb.top + max(0, (tb.bottom - tb.top - self.height()) // 2)
+            if anchor == "left":
+                x = tb.left + 8
+            else:
+                x = tb.right - _TRAY_RESERVE - self.width() - 12
+        else:
+            y = sgeo.bottom() - self.height() - 4
+            x = sgeo.right() - _TRAY_RESERVE - self.width() - 12
+        self.move(max(sgeo.left(), x), max(sgeo.top(), y))
 
     # ------------------------------------------------------------ 数据与布局
 
     def refresh(self) -> None:
-        """数据/配置变化后重建;保持用户拖过的位置"""
+        """数据/配置变化后重建"""
         self._hover_index = -1
-        self._measure()
+        self._place()
         self.update()
-        if not self._placed:
-            self._place_default()
-            self._placed = True
-        else:
-            pos = self._tray.config.overlay_pos()
-            if pos is not None:
-                self.move(*pos)
-        # 提到最前:任务栏是 topmost 窗口,不提就被压在下面看不见
-        ensure_topmost(int(self.winId()))
 
     def overlay_instances(self) -> list[PlatformInstance]:
         return [it for it in self._tray.config.instances() if self._tray.config.is_enabled(it.id)]
@@ -160,145 +315,120 @@ class StatusOverlay(QWidget):
         label = account_initials(self.overlay_instances()).get(inst.id, "?")
         return label, text
 
-    def _measure(self) -> None:
-        """按字宽度量算总宽(绘制与命中用同一套坐标)"""
-        num_fm = QFontMetrics(self._num_font())
-        label_fm = QFontMetrics(self._label_font())
-        instances = self.overlay_instances()
-        width = PADDING * 2
-        for index, inst in enumerate(instances):
-            label, text = self._chip_texts(inst)
-            width += label_fm.horizontalAdvance(label) + _GAP_LABEL_NUM
-            width += num_fm.horizontalAdvance(text)
-            if index < len(instances) - 1:
-                width += CHIP_GAP
-        # 宽度不变时不要重设尺寸:setFixedSize 会触发窗口重建与闪烁
-        target = max(width, 80)
-        if self.width() != target:
-            self.setFixedSize(target, BAR_HEIGHT)
-
     @staticmethod
-    def _num_font() -> QFont:
-        font = QFont("Segoe UI", _NUM_FONT_PT)
+    def _num_font(text: str) -> QFont:
+        font = QFont("Segoe UI", _NUM_FONT_PT if len(text) <= 2 else _NUM_FONT_PT_SMALL)
         font.setBold(True)
         return font
-
-    @staticmethod
-    def _label_font() -> QFont:
-        # DemiBold 而非 Bold:标签与数字同粗会抢戏
-        font = QFont("Segoe UI", _LABEL_FONT_PT)
-        font.setWeight(QFont.DemiBold)
-        return font
-
-    def _place_default(self) -> None:
-        """默认位置:任务栏右段、托盘区左侧;用户拖拽过则用记忆位置"""
-        remembered = self._tray.config.overlay_pos()
-        if remembered is not None:
-            self.move(*remembered)
-            return
-        screen = QGuiApplication.primaryScreen()
-        if screen is None:
-            return
-        sgeo = screen.geometry()
-        tb = taskbar_rect()
-        if tb is not None:
-            # +2px 下沉:对齐托盘图标的光学中心(纯居中会偏上)
-            y = tb.top + max(0, (tb.bottom - tb.top - self.height()) // 2 + 2)
-            x = tb.right - _TRAY_RESERVE - self.width() - 12
-        else:
-            y = sgeo.bottom() - self.height() - 4
-            x = sgeo.right() - _TRAY_RESERVE - self.width() - 12
-        self.move(max(sgeo.left(), x), max(sgeo.top(), y))
 
     # ------------------------------------------------------------ 绘制
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        palette = _LIGHT if _taskbar_is_light() else _DARK
-        num_fm = QFontMetrics(self._num_font())
-        label_fm = QFontMetrics(self._label_font())
-        band_top = (self.height() - CHIP_H) // 2
-        # 全行统一基线:以数字行的基线为准,标签落在同一条线上
-        baseline = band_top + (CHIP_H - num_fm.height()) // 2 + num_fm.ascent()
-        self._chips = []
-
-        # 底板:淡色圆角卡片,让面板在任务栏上"有块"、不飘
-        plate = QRect(PADDING // 2, band_top - 4, self.width() - PADDING, CHIP_H + 8)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(palette["plate"])
-        painter.drawRoundedRect(plate, 7, 7)
-
-        x = PADDING
         instances = self.overlay_instances()
         labels = account_initials(instances)
+        self._chips = []
+
+        # 底色:嵌入模式必须不透明(child window 不支持 alpha),浮层模式保持透明
+        base = QColor(*self._bg_color)
+        if self._embed_host is not None:
+            painter.fillRect(self.rect(), base)
+        block_fill = base.lighter(118) if not _taskbar_is_light() else base.darker(115)
+
+        x = PADDING
         for index, inst in enumerate(instances):
-            chip_left = x
             data = self._tray.data(inst.id)
             metrics = self._tray._visible_metrics(inst.id)
             text = render.tray_text(metrics[0], self._tray.config.display_mode()) if metrics else "--"
             if self._tray.is_loading(inst.id) and not metrics:
                 text = "…"
             label = labels.get(inst.id, "?")
-            status = render.status_color(data)
-            color = _STATUS_QCOLOR.get(status, _STATUS_QCOLOR[render.COLOR_GRAY])
+            color = _STATUS_QCOLOR.get(render.status_color(data), _STATUS_QCOLOR[render.COLOR_GRAY])
 
-            label_w = label_fm.horizontalAdvance(label)
-            num_w = num_fm.horizontalAdvance(text)
-            chip_w = label_w + _GAP_LABEL_NUM + num_w
+            block = QRect(x, 2, BLOCK_W, BLOCK_H)
+            self._chips.append((block, inst.id))
 
-            if index == self._hover_index:  # 悬停高亮画在文字下层
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(palette["hover"])
-                painter.drawRoundedRect(
-                    chip_left - 6, band_top - 2, chip_w + 12, CHIP_H + 4, 5, 5
-                )
+            # 方块底(窗口区域已镂空,这里只画块内)
+            fill = block_fill.lighter(120) if index == self._hover_index else block_fill
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(fill)
+            painter.drawRoundedRect(block, 7, 7)
 
-            # 首字母标签:状态色(随额度绿/黄/红)
-            painter.setFont(self._label_font())
+            # 数字:状态色,居中
+            font = self._num_font(text)
+            painter.setFont(font)
             painter.setPen(color)
-            painter.drawText(QPoint(x, baseline), label)
-            x += label_w + _GAP_LABEL_NUM
+            fm = QFontMetrics(font)
+            tx = block.left() + (block.width() - fm.horizontalAdvance(text)) // 2
+            ty = block.top() + (block.height() + fm.ascent() - fm.descent()) // 2 + 1
+            painter.drawText(QPoint(tx, ty), text)
 
-            # 数值:纯白粗体(数字才是主角)
-            painter.setFont(self._num_font())
-            painter.setPen(palette["text"])
-            painter.drawText(QPoint(x, baseline), text)
-            x += num_w
+            # 首字母:块内左上角的小标记(M1/M2/G …),小到不抢戏
+            lf = QFont("Segoe UI", 7)
+            lf.setWeight(QFont.DemiBold)
+            painter.setFont(lf)
+            painter.setPen(base.lighter(190) if not _taskbar_is_light() else base.darker(160))
+            painter.drawText(QPoint(block.left() + 3, block.top() + 9), label)
 
-            self._chips.append(
-                (QRect(chip_left - 6, band_top - 2, chip_w + 12, CHIP_H + 4), inst.id)
-            )
-            x += CHIP_GAP
+            x += BLOCK_W + BLOCK_GAP
 
         painter.end()
 
     # ------------------------------------------------------------ 交互
 
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
-            self._press_pos = event.globalPos()
-            self._press_win_pos = self.pos()
+        if event.button() != Qt.LeftButton:
+            self._press_pos = None
+            self._press_win_pos = None
             self._dragging = False
+        if event.button() == Qt.LeftButton:
+            if self._embed_host is None:
+                # 浮层模式才支持拖拽(嵌入后是任务栏子窗口,拖不出任务栏)
+                self._press_pos = event.globalPos()
+                self._press_win_pos = self.pos()
+                self._dragging = False
         elif event.button() == Qt.RightButton:
             self._tray._show_menu()
 
     def mouseMoveEvent(self, event) -> None:
-        index = self._chip_at(event.pos())
-        if index != self._hover_index:
-            self._hover_index = index
-            self.setCursor(Qt.PointingHandCursor if index is not None else Qt.ArrowCursor)
+        # 按键已松开但没收到 release(例如右键开菜单时左键 release 被菜单吃掉)
+        # → 拖拽状态残留,会让之后任意鼠标移动变成拖拽。按实际按键状态纠正。
+        if self._press_pos is not None and not (event.buttons() & Qt.LeftButton):
+            self._press_pos = None
+            self._press_win_pos = None
+            self._dragging = False
+        # 拖拽中:跟手移动
         if self._press_pos is not None:
             delta = event.globalPos() - self._press_pos
-            if self._dragging or delta.manhattanLength() > 4:
+            if self._dragging or delta.manhattanLength() > 5:
                 self._dragging = True
                 self.move(self._press_win_pos + delta)
+                self._tip.hide()
+                return
+        index = self._chip_at(event.pos())
+        changed = index != self._hover_index
+        if changed:
+            self._hover_index = index
+            self.setCursor(Qt.PointingHandCursor if index is not None else Qt.ArrowCursor)
+            self.update()
+        # 悬停浮窗:任务栏只显示百分比,详情靠浮窗给出。
+        # 内容只在换账号时重建(每次鼠标移动都 setText+adjustSize 会抖且费 CPU),
+        # 位置跟随只做 move。
+        if index is not None and not self._dragging:
+            instance_id = self._chips[index][1]
+            self._tip.show_text(
+                self._tooltip_html(instance_id), event.globalPos(), rebuild=changed
+            )
+        else:
+            self._tip.hide()
 
     def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.LeftButton and self._press_pos is not None:
             moved = (event.globalPos() - self._press_pos).manhattanLength()
-            if self._dragging and moved > 4:
-                self._tray.config.set_overlay_pos((self.x(), self.y()))  # 记住位置
+            if self._dragging and moved > 5:
+                # 拖完记住位置:想放左放右都行
+                self._tray.config.set_overlay_pos((self.x(), self.y()))
             elif not self._dragging:
                 index = self._chip_at(event.pos())
                 if index is not None:
@@ -309,6 +439,55 @@ class StatusOverlay(QWidget):
         self._press_pos = None
         self._press_win_pos = None
         self._dragging = False
+
+    def _tooltip_html(self, instance_id: str) -> str:
+        """悬停明细:账号名 + 指标名 + 数值 + 重置倒计时 + 异常提示"""
+        i18n = get_i18n()
+        inst = self._tray.config.instance(instance_id)
+        if inst is None:
+            return ""
+        data = self._tray.data(instance_id)
+        metrics = self._tray._visible_metrics(instance_id)
+        if not metrics:
+            return f"{inst.display_name}: {i18n.t('popover.noData')}"
+        head = f"<b>{inst.display_name}</b>"
+        rows = []
+        for metric in metrics:
+            key = f"metric.{metric.label}"
+            title = i18n.t(key)
+            if title == key:
+                title = metric.label
+            # 数值口径与面板一致(面板用 tray_text:已用/剩余随显示模式)
+            value = render.tray_text(metric, self._tray.config.display_mode())
+            if metric.unit == "%":
+                value = f"{value}%"
+            extra = ""
+            if metric.reset_time is not None:
+                kind, payload = render.reset_countdown(metric.reset_time)
+                if kind == "soon":
+                    extra = f" · {i18n.t('daily.reset.soon')}"
+                elif kind == "hm":
+                    hours, minutes = payload
+                    if hours > 0:
+                        extra = f" · {i18n.t('daily.reset.remaining', hours, minutes)}"
+                    else:
+                        extra = f" · {i18n.t('daily.reset.minutesonly', minutes)}"
+                elif kind == "days":
+                    days, hours = payload
+                    extra = f" · {i18n.t('weekly.reset.remaining', days, hours)}"
+            rows.append(f"{title}: <b>{value}</b>{extra}")
+        if data is not None and not data.is_healthy:
+            rows.append(f"<span style='color:#FF6B5E'>{i18n.t('popover.low')}</span>")
+        return head + "<br>" + "<br>".join(rows)
+
+    def leaveEvent(self, event) -> None:
+        self._tip.hide()
+        super().leaveEvent(event)
+
+    def hideEvent(self, event) -> None:
+        # 面板被隐藏(菜单里关掉)时浮窗也会滞留屏幕上,一并收掉
+        self._tip.hide()
+        super().hideEvent(event)
 
     def _chip_at(self, pos) -> Optional[int]:
         for index, (rect, _) in enumerate(self._chips):

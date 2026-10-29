@@ -99,9 +99,9 @@ class TrayApp(QObject):
         self._show_startup_bubble()
         if self.config.overlay_enabled():
             self._overlay.show()
+            self._overlay.attach()   # 嵌入任务栏(在 show 之后,否则会被 Qt 重置)
         self._overlay.refresh()
         self.fetch_all_async()
-
     def _show_startup_bubble(self) -> None:
         """启动气泡:Windows 下新应用的托盘图标可能落进「^」折叠区,弹一次让用户发现图标。
 
@@ -372,6 +372,23 @@ class TrayApp(QObject):
         overlay_act.setChecked(cfg.overlay_enabled())
         overlay_act.triggered.connect(lambda checked=False: self._toggle_overlay(checked))
 
+        # 面板位置:靠任务栏左端 / 靠通知区右端(想放哪放哪)
+        anchor_menu = menu.addMenu(i18n.t("menu.overlayPosition"))
+        anchor = cfg.overlay_anchor()
+        for key, text_key in (("left", "menu.overlayPosition.left"), ("right", "menu.overlayPosition.right")):
+            act = anchor_menu.addAction(i18n.t(text_key))
+            act.setCheckable(True)
+            act.setChecked(anchor == key)
+            act.triggered.connect(
+                lambda checked=False, a=key, sub=anchor_menu: self._set_overlay_anchor(a, sub)
+            )
+
+        # 嵌入任务栏 / 浮层 两种形态切换
+        embed_act = menu.addAction(i18n.t("menu.overlayEmbedded"))
+        embed_act.setCheckable(True)
+        embed_act.setChecked(cfg.overlay_embedded())
+        embed_act.triggered.connect(lambda checked=False: self._toggle_overlay_embedded(checked))
+
         # 托盘图标开关(默认关:面板已承载全部功能,托盘图标只算备用入口)
         tray_act = menu.addAction(i18n.t("menu.trayIcon"))
         tray_act.setCheckable(True)
@@ -484,17 +501,49 @@ class TrayApp(QObject):
         self.fetch_all_async()
 
     def _toggle_overlay(self, checked: bool) -> None:
+        """面板开关;关闭时若托盘图标也是关的,自动打开托盘图标。
+
+        不变式:面板与托盘图标至少留一个入口。否则进程还在(setQuitOnLastWindowClosed
+        为 False,不会自杀)、定时器还在打网络,但用户既打不开详情窗也点不出菜单,
+        只能去任务管理器杀进程——等于把应用锁死。
+        """
         self.config.set_overlay_enabled(checked)
-        if checked:
+        if not checked:
+            if not self.config.tray_icon_enabled():
+                self.config.set_tray_icon_enabled(True)
+                self._rebuild_trays()
+        else:
             self._overlay.refresh()
             self._overlay.show()
-        else:
-            self._overlay.hide()
+        self._overlay.refresh()
 
     def _toggle_tray_icon(self, checked: bool) -> None:
-        """托盘图标开关:关闭后托盘区不再有图标,面板与详情窗照常"""
+        """托盘图标开关:关闭后托盘区不再有图标,面板与详情窗照常。
+
+        不变式:托盘图标关闭时面板必须开着(否则没有任何入口)。
+        """
+        if not checked and not self.config.overlay_enabled():
+            self.config.set_overlay_enabled(True)
+            self._overlay.refresh()
+            self._overlay.show()
         self.config.set_tray_icon_enabled(checked)
         self._rebuild_trays()
+
+    def _set_overlay_anchor(self, anchor: str, sub: Optional[QMenu] = None) -> None:
+        """面板锚点:靠任务栏左端 / 靠通知区"""
+        self.config.set_overlay_anchor(anchor)
+        if sub is not None:
+            self._sync_check_group(sub, anchor)
+        self._overlay.refresh()
+
+    def _toggle_overlay_embedded(self, checked: bool) -> None:
+        """切换「嵌入任务栏」与「浮层」两种形态"""
+        self.config.set_overlay_embedded(checked)
+        if checked:
+            self._overlay.attach()
+        else:
+            self._overlay.detach()
+        self._overlay.refresh()
 
     def _set_display_mode(self, mode: str, sub: Optional[QMenu] = None) -> None:
         self.config.set_display_mode(mode)
