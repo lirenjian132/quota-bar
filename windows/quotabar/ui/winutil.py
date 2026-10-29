@@ -68,3 +68,38 @@ def ensure_topmost(hwnd) -> bool:
         return bool(ok)
     except Exception:
         return False
+
+
+def is_covered_by_taskbar(hwnd) -> bool:
+    """面板是否被更上层的窗口压在下面。
+
+    判据:沿 Z 序向前找第一个与本窗口矩形相交、且不是自身的可见顶层窗口。
+    任务栏(Shell_TrayWnd)与置顶应用(如 ZCode)都会命中。
+    只在真正被盖时才需要重新置顶——无条件 SetWindowPos 会让透明窗口闪烁。
+    """
+    try:
+        user32 = ctypes.windll.user32
+        user32.GetWindow.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        user32.GetWindow.restype = ctypes.c_void_p
+        user32.GetWindowRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(RECT)]
+        user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+        GW_HWNDPREV = 3
+
+        mine = RECT()
+        if not user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(mine)):
+            return False
+
+        prev = user32.GetWindow(ctypes.c_void_p(hwnd), GW_HWNDPREV)
+        checked = 0
+        while prev and checked < 12:
+            checked += 1
+            if prev != hwnd and user32.IsWindowVisible(ctypes.c_void_p(prev)):
+                r = RECT()
+                if user32.GetWindowRect(ctypes.c_void_p(prev), ctypes.byref(r)):
+                    # 矩形相交 → 这个窗口盖在我们上面
+                    if r.left < mine.right and r.right > mine.left and r.top < mine.bottom and r.bottom > mine.top:
+                        return True
+            prev = user32.GetWindow(ctypes.c_void_p(prev), GW_HWNDPREV)
+    except Exception:
+        return False
+    return False

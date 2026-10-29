@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 """任务栏数字面板(StatusOverlay):Windows 上 Mac 菜单栏的对等物。
 
-单行精简设计(TrafficMonitor 式层级):「首字母 数字」,如 M1 100 / G 42:
+单行设计:「首字母(状态色) 数值(白色)」,如 M1 81 / M2 100:
 - 账号标签用平台首字母(M/G/S/J),同平台多账号加序号(M1、M2),不显示中文名
-- 数字直接用状态色(绿/黄/红/灰)——省掉状态圆点,少一个元素多一分简洁
-- 全行统一基线;块间距固定,宽度按字宽度量精确排布
-- 常驻置顶、无边框、可整体拖拽到任务栏任意位置(位置持久化)
-- 左键账号块:切换激活账号并打开详情窗;右键:完整菜单
-- 深浅任务栏主题自适应(读系统 AppsUseLightTheme)
-- 托盘菜单「任务栏数字面板」可整体开关
+- 首字母随额度变色(绿/黄/红/灰),数值恒为白色——标签提示是哪个号,数字才是主角
+- 字号放大、行距舒展,配淡色圆角底板;右下角空间充裕,不必挤成一小条
+- 不抢焦点(WA_ShowWithoutActivating + WindowDoesNotAcceptFocus),点别处不会导致它消失
+- 常驻置顶、可整体拖拽到任务栏任意位置(位置持久化),仅在真被任务栏盖住时才重新置顶
 """
 
 from __future__ import annotations
@@ -22,14 +20,14 @@ from PyQt5.QtWidgets import QWidget
 
 from .. import render
 from ..models import PlatformInstance, PlatformType
-from .winutil import ensure_topmost, taskbar_rect
+from .winutil import ensure_topmost, is_covered_by_taskbar, taskbar_rect
 
 #: 面板尺寸(逻辑像素)
-BAR_HEIGHT = 26
-CHIP_H = 22
-#: 块间距(组与组之间的结构性分隔,读成两组数据的关键)
-CHIP_GAP = 14
-PADDING = 5
+BAR_HEIGHT = 34
+CHIP_H = 28
+#: 块间距(组与组之间的结构性分隔)
+CHIP_GAP = 20
+PADDING = 8
 
 #: 平台首字母(J = 基元律动 TokenRhythm)
 _PLATFORM_INITIAL = {
@@ -39,12 +37,22 @@ _PLATFORM_INITIAL = {
     PlatformType.TOKENRHYTHM: "J",
 }
 
-#: 深色任务栏配色
-_DARK = {"label": "#C8C8C8", "hover": QColor(255, 255, 255, 26)}
+#: 深色任务栏配色(底板略深于任务栏,形成卡片感)
+_DARK = {
+    "plate": QColor(255, 255, 255, 16),
+    "edge": QColor(255, 255, 255, 28),
+    "text": QColor("#FFFFFF"),
+    "hover": QColor(255, 255, 255, 38),
+}
 #: 浅色任务栏配色
-_LIGHT = {"label": "#3A3A3A", "hover": QColor(0, 0, 0, 24)}
+_LIGHT = {
+    "plate": QColor(0, 0, 0, 18),
+    "edge": QColor(0, 0, 0, 28),
+    "text": QColor("#1E1E1E"),
+    "hover": QColor(0, 0, 0, 40),
+}
 
-#: 数字用状态色(与托盘徽章同一套语义色)
+#: 首字母用状态色(与托盘点同一套语义色)
 _STATUS_QCOLOR = {
     render.COLOR_GRAY: QColor("#8E8E93"),
     render.COLOR_RED: QColor("#FF453A"),
@@ -56,9 +64,9 @@ _STATUS_QCOLOR = {
 _TRAY_RESERVE = 340
 
 #: 标签→数字间距
-_GAP_LABEL_NUM = 5
-_NUM_FONT_PT = 11
-_LABEL_FONT_PT = 8
+_GAP_LABEL_NUM = 8
+_NUM_FONT_PT = 15
+_LABEL_FONT_PT = 11
 
 
 def _taskbar_is_light() -> bool:
@@ -92,8 +100,13 @@ class StatusOverlay(QWidget):
     """任务栏常驻数字面板;数据/配置一律读 TrayApp,自身不取数。"""
 
     def __init__(self, tray):
-        super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        super().__init__(
+            None,
+            Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus,
+        )
         self.setAttribute(Qt.WA_TranslucentBackground)
+        # 显示但不激活:点面板/点别处都不改变焦点,也不会因此被重绘掉
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setMouseTracking(True)
         self._tray = tray
         self._chips: list[tuple[QRect, str]] = []    # [(QRect, instance_id)]
@@ -102,26 +115,20 @@ class StatusOverlay(QWidget):
         self._press_win_pos: Optional[QPoint] = None # 按下时窗口位置
         self._dragging = False
         self._placed = False                         # 是否已定过位(默认或记忆)
-        # 置顶守护:任务栏本身是 topmost 窗口,不周期性重提,面板会被压到下面"消失"
+        # 置顶守护:任务栏本身、以及 ZCode 这类置顶窗口都会盖住面板。
+        # 用 500ms 的轻量检测(仅 GetWindow + GetClassName)判断是否真被盖,
+        # 被盖才重新置顶——无条件 SetWindowPos 会让透明窗口闪一下。
         self._topmost_timer = QTimer(self)
         self._topmost_timer.timeout.connect(self._ensure_visible)
-        self._topmost_timer.start(3000)
+        self._topmost_timer.start(500)
         self.refresh()
 
     def _ensure_visible(self) -> None:
-        """周期性把窗口提到最前,并校正跑偏的位置"""
+        """仅在真被任务栏盖住时重新置顶(避免透明窗口周期性闪烁)"""
         if not self.isVisible():
             return
-        ensure_topmost(int(self.winId()))
-        self._realign_if_needed()
-
-    def _realign_if_needed(self) -> None:
-        """位置失效(任务栏移动/分辨率变化/被拖出界)时拉回原位"""
-        remembered = self._tray.config.overlay_pos()
-        if remembered is None:
-            return
-        if (self.x(), self.y()) != remembered:
-            self.move(*remembered)
+        if is_covered_by_taskbar(int(self.winId())):
+            ensure_topmost(int(self.winId()))
 
     # ------------------------------------------------------------ 数据与布局
 
@@ -165,7 +172,10 @@ class StatusOverlay(QWidget):
             width += num_fm.horizontalAdvance(text)
             if index < len(instances) - 1:
                 width += CHIP_GAP
-        self.setFixedSize(max(width, 56), BAR_HEIGHT)
+        # 宽度不变时不要重设尺寸:setFixedSize 会触发窗口重建与闪烁
+        target = max(width, 80)
+        if self.width() != target:
+            self.setFixedSize(target, BAR_HEIGHT)
 
     @staticmethod
     def _num_font() -> QFont:
@@ -175,7 +185,7 @@ class StatusOverlay(QWidget):
 
     @staticmethod
     def _label_font() -> QFont:
-        # DemiBold 而非 Bold:8px 字号下 Bold 会糊成墨团
+        # DemiBold 而非 Bold:标签与数字同粗会抢戏
         font = QFont("Segoe UI", _LABEL_FONT_PT)
         font.setWeight(QFont.DemiBold)
         return font
@@ -209,9 +219,15 @@ class StatusOverlay(QWidget):
         num_fm = QFontMetrics(self._num_font())
         label_fm = QFontMetrics(self._label_font())
         band_top = (self.height() - CHIP_H) // 2
-        # 全行统一基线:以数字行的居中基线为准,标签落在同一条线上
+        # 全行统一基线:以数字行的基线为准,标签落在同一条线上
         baseline = band_top + (CHIP_H - num_fm.height()) // 2 + num_fm.ascent()
         self._chips = []
+
+        # 底板:淡色圆角卡片,让面板在任务栏上"有块"、不飘
+        plate = QRect(PADDING // 2, band_top - 4, self.width() - PADDING, CHIP_H + 8)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(palette["plate"])
+        painter.drawRoundedRect(plate, 7, 7)
 
         x = PADDING
         instances = self.overlay_instances()
@@ -224,6 +240,8 @@ class StatusOverlay(QWidget):
             if self._tray.is_loading(inst.id) and not metrics:
                 text = "…"
             label = labels.get(inst.id, "?")
+            status = render.status_color(data)
+            color = _STATUS_QCOLOR.get(status, _STATUS_QCOLOR[render.COLOR_GRAY])
 
             label_w = label_fm.horizontalAdvance(label)
             num_w = num_fm.horizontalAdvance(text)
@@ -233,24 +251,23 @@ class StatusOverlay(QWidget):
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(palette["hover"])
                 painter.drawRoundedRect(
-                    chip_left - PADDING, band_top, chip_w + PADDING * 2, CHIP_H, 4, 4
+                    chip_left - 6, band_top - 2, chip_w + 12, CHIP_H + 4, 5, 5
                 )
 
-            # 首字母标签(小号,灰色,与数字同基线)
+            # 首字母标签:状态色(随额度绿/黄/红)
             painter.setFont(self._label_font())
-            painter.setPen(QColor(palette["label"]))
+            painter.setPen(color)
             painter.drawText(QPoint(x, baseline), label)
             x += label_w + _GAP_LABEL_NUM
 
-            # 数字(大号粗体,直接用状态色)
-            color = _STATUS_QCOLOR.get(render.status_color(data), _STATUS_QCOLOR[render.COLOR_GRAY])
+            # 数值:纯白粗体(数字才是主角)
             painter.setFont(self._num_font())
-            painter.setPen(color)
+            painter.setPen(palette["text"])
             painter.drawText(QPoint(x, baseline), text)
             x += num_w
 
             self._chips.append(
-                (QRect(chip_left - PADDING, band_top - 2, chip_w + PADDING * 2, CHIP_H + 4), inst.id)
+                (QRect(chip_left - 6, band_top - 2, chip_w + 12, CHIP_H + 4), inst.id)
             )
             x += CHIP_GAP
 
