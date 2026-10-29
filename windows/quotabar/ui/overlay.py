@@ -73,7 +73,7 @@ _STATUS_QCOLOR_BRIGHT = {
 }
 
 #: 悬停浮窗固定宽度(列宽 300 + 间距 36 + 边距 28)
-_TIP_WIDTH = 364
+_TIP_WIDTH = 372
 
 #: 字号与间距
 #: 标签→数值间距
@@ -143,6 +143,7 @@ class _TooltipWindow(QWidget):
         self._frame = QFrame(self)
         self._frame.setObjectName("tipCard")
         self._frame.setAttribute(Qt.WA_StyledBackground, True)
+        self._frame.setAttribute(Qt.WA_OpaquePaintEvent, True)
         self._frame.setStyleSheet(
             "QFrame#tipCard { background-color: rgba(247, 248, 250, 246);"
             " border: 1px solid rgba(120, 130, 145, 90);"
@@ -155,7 +156,7 @@ class _TooltipWindow(QWidget):
         self._grid.setHorizontalSpacing(12)
         self._grid.setVerticalSpacing(5)
         # 列最小宽度;浮窗整体宽度另行固定(见 TIP_WIDTH)
-        for col, width in ((0, 28), (1, 92), (2, 56), (3, 124)):
+        for col, width in ((0, 34), (1, 104), (2, 58), (3, 132)):
             self._grid.setColumnMinimumWidth(col, width)
         self._sig = None  # 上次内容签名,内容没变就不重建(重建会导致闪烁)
 
@@ -181,24 +182,27 @@ class _TooltipWindow(QWidget):
             if acc != last_acc:
                 if last_acc is not None:
                     line += 1  # 账号之间留一行空隙
+                # 彩色圆角小块(白字):比纯彩色文字更醒目、更有标签感
                 acc_label = QLabel(acc)
+                acc_label.setAlignment(Qt.AlignCenter)
+                acc_label.setFixedHeight(15)
                 acc_label.setStyleSheet(
-                    f"color:{acc_color}; font-size:12px; font-weight:bold;"
-                    " border: none; background: transparent;"
+                    f"background-color:{acc_color}; color:#FFFFFF; border-radius:3px;"
+                    " font-size:10px; font-weight:bold; border: none;"
                 )
                 self._grid.addWidget(acc_label, line, 0, Qt.AlignLeft | Qt.AlignVCenter)
                 last_acc = acc
 
             m = QLabel(metric)
-            m.setStyleSheet("color:#5A6270; font-size:11px; border: none; background: transparent;")
+            m.setStyleSheet("color:#4A5261; font-size:11px; border: none; background: transparent;")
             self._grid.addWidget(m, line, 1, Qt.AlignLeft | Qt.AlignVCenter)
 
             v = QLabel(value)
-            v.setStyleSheet("color:#1E2430; font-size:13px; font-weight:bold; border: none; background: transparent;")
+            v.setStyleSheet("color:#161B22; font-size:13px; font-weight:bold; border: none; background: transparent;")
             self._grid.addWidget(v, line, 2, Qt.AlignRight | Qt.AlignVCenter)
 
             e = QLabel(extra)
-            e.setStyleSheet("color:#8A93A0; font-size:10px; border: none; background: transparent;")
+            e.setStyleSheet("color:#98A1AE; font-size:10px; border: none; background: transparent;")
             self._grid.addWidget(e, line, 3, Qt.AlignLeft | Qt.AlignVCenter)
             line += 1
 
@@ -235,6 +239,10 @@ class StatusOverlay(QWidget):
         # 文字旁的透明处会把鼠标直接穿透给下层窗口(置顶应用),hover/点击收不到。
         # 改成不透明窗口、底色取任务栏色 —— 视觉上与任务栏无缝,命中按整个矩形。
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        # 关键:声明不透明,Qt 重绘时不再先擦背景再画 —— 否则鼠标在面板上移动
+        # 触发重绘时会看到整条面板"闪一下"
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
+        self.setAutoFillBackground(False)
         self.setMouseTracking(True)
         self._tray = tray
         self._chips: list[tuple[QRect, str]] = []    # [(QRect, instance_id)]
