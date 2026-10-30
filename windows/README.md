@@ -66,3 +66,29 @@ quotabar/
   ui/             托盘图标与详情窗(PyQt5)
 tests/            pytest 单测
 ```
+
+## 打包与安装
+
+用 PyInstaller 打成 onedir,产物是 `QuotaBar.exe` + `_internal/`。
+
+```bash
+cd windows
+.venv\Scripts\pyinstaller.exe --noconfirm --clean --onedir --windowed \
+  --name QuotaBar --icon Resources/quota-bar.ico \
+  --add-data "Resources;Resources" \
+  --distpath <输出目录> --workpath <中间目录> run.py
+```
+
+**在含中文的路径下构建会失败**,报 `Qt plugin directory '.../??/...' does not exist`:
+Qt5 的 `QLibraryInfo.location()` 会把路径里的非 ASCII 字符转成 `?`,PyInstaller
+据此判定插件目录不存在。绕法是把 PyQt5 复制到纯 ASCII 路径后构建:
+
+```bash
+cp -r .venv/Lib/site-packages/PyQt5 C:/qbpyqt/          # 复制到 ASCII 路径
+PYTHONPATH=C:/qbpyqt .venv/Scripts/pyinstaller.exe ...   # 同上参数
+```
+
+安装:把产物整个目录放到 `E:\Apps\QuotaBar`(或任意路径)即可,数据目录仍是
+`%APPDATA%\QuotaBar`,与安装位置无关。升级时先结束正在运行的 `QuotaBar.exe`
+(单实例锁会让新实例静默退出)。
+
