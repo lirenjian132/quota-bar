@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Dict, Optional
@@ -52,6 +53,11 @@ class PlatformManager:
         self._lock = threading.Lock()
         #: 每实例一把续期锁:并发 fetch_all 与单账号刷新不能对同一账号双发 RefreshToken
         self._refresh_locks: Dict[str, threading.Lock] = {}
+        #: 续期失败冷却(秒):refresh token 失效后不再每个周期白打一次 RefreshToken
+        self._refresh_cooldown: Dict[str, float] = {}
+        #: 冷却世代:用户保存新凭据时递增,在途失败的刷新不再重新武装冷却
+        self._refresh_generation: Dict[str, int] = {}
+        self._REFRESH_COOLDOWN_SECONDS = 300.0
 
     def service_for(self, instance_id: str):
         """每实例一个 service 对象;缓存与在途状态按账号隔离"""
@@ -120,6 +126,8 @@ class PlatformManager:
         parsed = parse_credential(credential)
         if not needs_refresh(parsed):
             return
+        if self._refresh_on_cooldown(instance_id):
+            return
         with self._lock:
             lock = self._refresh_locks.setdefault(instance_id, threading.Lock())
         with lock:
@@ -127,22 +135,50 @@ class PlatformManager:
             parsed = parse_credential(credential)
             if not needs_refresh(parsed):
                 return
+            generation = self._refresh_generation_of(instance_id)
             fresh = refresh_credential(credential, self._network, parsed=parsed)
             if not fresh:
+                self._mark_refresh_cooldown(instance_id, generation)
                 return
             try:
-                # 刷新期间的任何写入(换 key/重新登录)都优先于本次结果
-                if self._config.api_key(instance_id) == credential:
-                    self._config.set_api_key(instance_id, fresh)
-            except (OSError, TypeError, UnicodeEncodeError):
+                # 原子 CAS:比较与写入在同一把锁内完成。刷新在途期间用户换了
+                # key/重新登录,则放弃写回(别人的更新优先),不会把用户的新
+                # 凭据覆盖成旧凭据刷出的串。
+                # KeyError:实例在刷新途中被删,跳过即可。
+                self._config.compare_and_set_api_key(instance_id, credential, fresh)
+            except (OSError, TypeError, UnicodeEncodeError, KeyError):
                 # 落盘失败:不阻断本次主请求;下次刷新会再试
                 pass
+
+    def _refresh_on_cooldown(self, instance_id: str) -> bool:
+        with self._lock:
+            return time.time() < self._refresh_cooldown.get(instance_id, 0.0)
+
+    def _refresh_generation_of(self, instance_id: str) -> int:
+        with self._lock:
+            return self._refresh_generation.get(instance_id, 0)
+
+    def _mark_refresh_cooldown(self, instance_id: str, generation: int) -> None:
+        with self._lock:
+            # 只有"发起刷新时那个世代"才武装:期间用户存了新凭据(世代已变)
+            # 就不冷却,避免刚换的 key 被在途失败拖进 5 分钟
+            if self._refresh_generation.get(instance_id, 0) != generation:
+                return
+            self._refresh_cooldown[instance_id] = time.time() + self._REFRESH_COOLDOWN_SECONDS
+
+    def clear_refresh_cooldown(self, instance_id: str) -> None:
+        """用户保存/重登新凭据:解除冷却并推进世代(在途失败不再重新武装)"""
+        with self._lock:
+            self._refresh_cooldown.pop(instance_id, None)
+            self._refresh_generation[instance_id] = self._refresh_generation.get(instance_id, 0) + 1
 
     def remove_instance(self, instance_id: str) -> None:
         """账号删除后清理其 service(连带缓存),防已删账号的对象常驻内存"""
         with self._lock:
             self._services.pop(instance_id, None)
             self._refresh_locks.pop(instance_id, None)
+            self._refresh_cooldown.pop(instance_id, None)
+            self._refresh_generation.pop(instance_id, None)
 
     def clear_all_caches(self) -> None:
         """「立即刷新」入口:清所有实例缓存,下次取数强制走网络"""

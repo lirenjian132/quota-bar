@@ -27,13 +27,35 @@ from typing import Optional
 
 from ..models import PlatformType
 
-#: 浏览器可执行文件的候选位置(优先 Edge)
+#: 浏览器可执行文件的候选位置(优先 Edge)。
+#: %LOCALAPPDATA% 是用户级安装(没有管理员权限时的常见位置),同样要找。
 _BROWSER_CANDIDATES = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
 ]
+
+
+def _user_level_candidates() -> list[str]:
+    return [
+        os.path.join(
+            os.environ.get("LOCALAPPDATA", ""),
+            r"Google\Chrome\Application\chrome.exe",
+        ),
+        os.path.join(
+            os.environ.get("LOCALAPPDATA", ""),
+            r"Microsoft\Edge\Application\msedge.exe",
+        ),
+    ]
+
+
+def find_browser() -> Optional[str]:
+    """找系统里的 Edge/Chrome(系统级 + 用户级安装)"""
+    for path in _BROWSER_CANDIDATES + _user_level_candidates():
+        if path and os.path.isfile(path):
+            return path
+    return None
 
 #: 各平台的登录页与凭据契约
 LOGIN_URLS = {
@@ -46,14 +68,6 @@ _PLATFORM_HOSTS = {
     PlatformType.STEPFUN: "stepfun.com",
     PlatformType.TOKENRHYTHM: "tokenrhythm.studio",
 }
-
-
-def find_browser() -> Optional[str]:
-    """找系统里的 Edge/Chrome"""
-    for path in _BROWSER_CANDIDATES:
-        if os.path.isfile(path):
-            return path
-    return None
 
 
 class BrowserLoginSession:
@@ -82,9 +96,14 @@ class BrowserLoginSession:
             "--new-window",
             url,
         ]
-        self._process = subprocess.Popen(
-            args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        try:
+            self._process = subprocess.Popen(
+                args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except OSError:
+            # 浏览器存在但起不来(被安全软件拦截/权限不足):返回 False 让
+            # 调用方给「启动失败」提示,不能让裸异常从调用链里冒出去
+            return False
         self._port = self._wait_for_port()
         return self._port is not None
 
@@ -131,12 +150,23 @@ class BrowserLoginSession:
                 return
             except OSError:
                 time.sleep(0.3)
-        # 删不掉就记一笔:目录里留着已登录的会话凭据,用户该知道
+        # 删不掉就记一笔:目录里留着已登录的会话凭据,用户该知道。
+        # 窗口化打包(PyInstaller windowed)下 stderr 无人可见,所以同时落一份
+        # 到数据目录的 error.log——用户能看到残留路径,手动清理有据可依。
         if os.path.isdir(self._profile_dir):
-            print(
-                f"[QuotaBar] 浏览器临时目录未能清理(可能仍被浏览器占用):{self._profile_dir}",
-                file=sys.stderr,
+            message = (
+                f"[QuotaBar] 浏览器临时目录未能清理(可能仍被浏览器占用):{self._profile_dir}"
             )
+            print(message, file=sys.stderr)
+            try:
+                from ..config import default_home
+
+                log_path = os.path.join(default_home(), "error.log")
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + message + "\n")
+            except Exception:
+                pass
 
     # ------------------------------------------------------------ 取 cookie
 

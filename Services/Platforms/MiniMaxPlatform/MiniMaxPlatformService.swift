@@ -46,8 +46,9 @@ final class MiniMaxPlatformAPIService: PlatformAPIService {
         }
 
         guard httpResponse.statusCode == 200 else {
-            let responseString = String(data: data, encoding: .utf8) ?? "unable to decode"
-            throw PlatformError.networkError(config.platformType, "HTTP \(httpResponse.statusCode): \(responseString.prefix(200))")
+            // 只报状态码, 不回显响应体: 代理/网关可能把请求头(含 key)回显进错误体,
+            // 原样拼接会被用户截图外传
+            throw PlatformError.networkError(config.platformType, "HTTP \(httpResponse.statusCode)")
         }
 
         let apiResponse: APIResponse
@@ -59,10 +60,11 @@ final class MiniMaxPlatformAPIService: PlatformAPIService {
 
         // 检查 API 业务状态码 (base_resp.status_code). 非 0 表示账户欠费、key 失效、
         // plan 暂停等业务错误, 此时直接给用户看 status_msg, 比笼统的"无效响应"更有用.
-        if let baseResp = apiResponse.baseResp, baseResp.statusCode != 0 {
+        // statusCode 缺失按 0 (无业务错误) 论: 此时 model_remains 还能正常用.
+        if let baseResp = apiResponse.baseResp, (baseResp.statusCode ?? 0) != 0 {
             let message = baseResp.statusMsg?.isEmpty == false
                 ? baseResp.statusMsg!
-                : "status_code \(baseResp.statusCode)"
+                : "status_code \(baseResp.statusCode ?? -1)"
             throw PlatformError.apiError(config.platformType, message)
         }
 

@@ -30,6 +30,12 @@ final class PlatformManager {
     // "摘的还是自己注册的那一个" (期间可能已被 handleInstanceRemoved 清空并重注册).
     private var inFlightRefreshes: [String: [String: InFlightRefreshBox]] = [:]
     private let serviceLock = NSLock()
+    // 刷新失败冷却 (每实例): refresh token 失效后不再每 60s 白打一次 RefreshToken
+    private var refreshCooldownUntil: [String: Date] = [:]
+    // 冷却世代:用户保存新凭据时递增,在途刷新失败不再重新武装冷却
+    // (否则 t0 刷新 → t1 用户换 key → t2 刷新失败,刚存的凭据又被冷却 5 分钟)
+    private var refreshCooldownGeneration: [String: Int] = [:]
+    private static let refreshCooldownInterval: TimeInterval = 300
     private let serviceFactory: (PlatformType) -> PlatformAPIService
     let networkService: NetworkService
     private let configService: ConfigService
@@ -71,6 +77,8 @@ final class PlatformManager {
         // 刷新在途的 Task 不禁掉 (非结构化, 停不下来); 摘掉字典项即可 —
         // 结果仍会被 await 它的调用方正常消费后丢弃.
         inFlightRefreshes.removeValue(forKey: id)
+        refreshCooldownUntil.removeValue(forKey: id)
+        refreshCooldownGeneration.removeValue(forKey: id)
         serviceLock.unlock()
     }
 
@@ -96,20 +104,62 @@ final class PlatformManager {
         // 发出, 旧凭据若已失效走既有 401 错误链 (提示重新登录粘贴).
         // setAPIKey 同步落 keychain (FileKeyStore), 随后 toConfigData 拿到新凭据,
         // 本次主请求与后续刷新周期都用它.
+        // 失败冷却: refresh token 失效时, 没有冷却的话每个刷新周期 (默认 60s)
+        // 都会白打一次 RefreshToken POST, 直到用户重登 —— 对平台接口不友好.
+        // 失败冷却期内不再尝试刷新 (冷却按实例记, 与单飞门控共用一把锁)
         if instance.platformType == .stepfun,
+           !refreshOnCooldown(instanceID: instance.id),
            let credential = store.apiKey,
            let parsed = StepFunSessionRefresher.parse(credential),
-           StepFunSessionRefresher.needsRefresh(parsed),
-           let fresh = await refreshStepFunSession(credential, parsed: parsed, instanceID: instance.id) {
-            // CAS 写回 (P0-1): 只有 store 当前凭据仍是本次刷新用的旧串才落库.
-            // 用户在刷新在途期间保存了新 key (主线程 saveAPIKey / renewSession),
-            // 刷新此刻才完成 → store.apiKey != credential → 放弃写回, 别人的更新
-            // 优先; 否则用户的新凭据会被旧凭据刷出的串覆盖 (表现为"改完 key 自己变回去").
-            if store.apiKey == credential {
-                store.setAPIKey(fresh)
+           StepFunSessionRefresher.needsRefresh(parsed) {
+            let generation = refreshGeneration(instanceID: instance.id)
+            if let fresh = await refreshStepFunSession(credential, parsed: parsed, instanceID: instance.id) {
+                // CAS 写回 (P0-1): 比较与写入在 store 的写锁内原子完成.
+                // 用户在刷新在途期间保存了新 key (主线程 saveAPIKey / renewSession),
+                // 刷新此刻才完成 → CAS 不匹配 → 放弃写回, 别人的更新优先;
+                // 否则用户的新凭据会被旧凭据刷出的串覆盖 (表现为"改完 key 自己变回去").
+                store.casAPIKey(expected: credential, fresh: fresh)
+            } else {
+                markRefreshCooldown(instanceID: instance.id, generation: generation)
             }
         }
         return try await service(for: instance).fetchUsage(config: store.toConfigData(), network: networkService)
+    }
+
+    /// 刷新失败冷却: 失败后 5 分钟内不再发 RefreshToken, 到点自动恢复尝试
+    private func refreshOnCooldown(instanceID: String) -> Bool {        serviceLock.lock()
+        defer { serviceLock.unlock() }
+        guard let until = refreshCooldownUntil[instanceID] else { return false }
+        if Date() >= until {
+            refreshCooldownUntil.removeValue(forKey: instanceID)
+            return false
+        }
+        return true
+    }
+
+    private func refreshGeneration(instanceID: String) -> Int {
+        serviceLock.lock()
+        defer { serviceLock.unlock() }
+        return refreshCooldownGeneration[instanceID, default: 0]
+    }
+
+    /// 只对"发起刷新时那个世代"武装冷却:期间用户保存过新凭据(世代已变)
+    /// 则不武装,避免刚换的 key 被在途失败拖进 5 分钟冷却
+    private func markRefreshCooldown(instanceID: String, generation: Int) {
+        serviceLock.lock()
+        defer { serviceLock.unlock() }
+        guard refreshCooldownGeneration[instanceID, default: 0] == generation else { return }
+        refreshCooldownUntil[instanceID] = Date().addingTimeInterval(Self.refreshCooldownInterval)
+    }
+
+    /// 用户保存/续期了新凭据:解除该实例的刷新失败冷却.
+    /// 不清的话:刚重登成功 (access token 剩余往往已 <300s) 会在冷却期内跳过
+    /// 预刷新, token 一过期主请求就 401, 用户被引导再重登一次.
+    func clearRefreshCooldown(instanceID: String) {
+        serviceLock.lock()
+        refreshCooldownUntil.removeValue(forKey: instanceID)
+        refreshCooldownGeneration[instanceID, default: 0] += 1
+        serviceLock.unlock()
     }
 
     /// StepFun 预刷新 + 单飞门控 (P1-1). 同实例同一凭据已有在途刷新 Task 则

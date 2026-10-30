@@ -200,10 +200,25 @@ class _TooltipWindow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_NoSystemBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # 卡片必须能接鼠标:鼠标从面板移向卡片(读详情的必然动作)会先离开面板,
+        # 若卡片透明传鼠标,它永远接不到进入事件、停不下"离开面板 250ms 收起",
+        # 结果是鼠标一靠近卡片它就消失
         self._accounts: list[TipAccount] = []
         self._sig = None
         self._geom = None
+        # 由 StatusOverlay 注入的悬停回调:进入卡片停收起定时器,离开再计时
+        self.on_enter = None
+        self.on_leave = None
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        if callable(self.on_enter):
+            self.on_enter()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        if callable(self.on_leave):
+            self.on_leave()
+        super().leaveEvent(event)
 
     # ------------------------------------------------------------ 对外
 
@@ -212,7 +227,7 @@ class _TooltipWindow(QWidget):
             self.hide()
             return
         sig = tuple(
-            (a.initial, a.name, a.color, a.error,
+            (a.initial, a.name, a.color, a.error, a.stale,
              tuple((m.label, m.value, m.countdown, m.ratio) for m in a.metrics))
             for a in accounts
         )
@@ -265,6 +280,10 @@ class _TooltipWindow(QWidget):
             self.CARD_PAD * 2 + 24 + 8 + name_w + 14 + metrics_w
         )
         content_w = max(content_w, 380)
+        # 超长账号名/数值可能把卡片撑得比屏幕还宽:按可用屏宽封顶(超宽部分被裁掉)
+        screen = QGuiApplication.primaryScreen()
+        max_w = (screen.availableGeometry().width() - 16) if screen else 1600
+        content_w = min(content_w, max_w)
 
         cards: list[tuple[int, int]] = []  # (y, height)
         y = 8
@@ -440,6 +459,8 @@ class StatusOverlay(QWidget):
         self._embed_host: Optional[int] = None
         self._last_attach_try: float = 0.0
         self._tip = _TooltipWindow()
+        self._tip.on_enter = self._tip_entered
+        self._tip.on_leave = self._tip_left
 
         # 守护定时器:只负责嵌入模式下探测 explorer 重启;浮层模式不在这里
         # 周期性抢 Z 序(那会让面板/任务栏区域闪)。置顶在 showEvent 里做一次。
@@ -460,13 +481,6 @@ class StatusOverlay(QWidget):
         self._press_win_pos: Optional[QPoint] = None
         self._dragging = False
         self.refresh()
-
-    def _win_pid(self) -> int:
-        pid = wt.DWORD()
-        ctypes.windll.user32.GetWindowThreadProcessId(
-            ctypes.c_void_p(int(self.winId())), ctypes.byref(pid)
-        )
-        return pid.value
 
     # ------------------------------------------------------------ 窗口命中
 
@@ -649,11 +663,17 @@ class StatusOverlay(QWidget):
 
         anchor = self._tray.config.overlay_anchor()
         if tb is not None:
-            y = tb.top + max(0, (tb.bottom - tb.top - self.height()) // 2)
-            if anchor == "left":
-                x = tb.left + 8
+            if tb.bottom - tb.top > tb.right - tb.left:
+                # 左/右竖排任务栏(Win10 侧排):贴任务栏内侧竖直居中。
+                # 横排公式对竖排会把面板挂到屏幕中部、x 算出负值贴到屏幕左缘
+                y = tb.top + max(0, (tb.bottom - tb.top - self.height()) // 2)
+                x = (tb.right - self.width() - 8) if anchor == "right" else (tb.left + 8)
             else:
-                x = tb.right - _TRAY_RESERVE - self.width() - 12
+                y = tb.top + max(0, (tb.bottom - tb.top - self.height()) // 2)
+                if anchor == "left":
+                    x = tb.left + 8
+                else:
+                    x = tb.right - _TRAY_RESERVE - self.width() - 12
         else:
             y = sgeo.bottom() - self.height() - 4
             x = sgeo.right() - _TRAY_RESERVE - self.width() - 12
@@ -675,7 +695,8 @@ class StatusOverlay(QWidget):
         data = self._tray.data(inst.id)
         metrics = self._tray._visible_metrics(inst.id)
         text = render.tray_text(metrics[0], self._tray.config.display_mode()) if metrics else "--"
-        if self._tray.config.show_percent() and metrics and metrics[0].unit == "%":
+        # tray_text 对 inf/NaN 返回 "--",别拼出 "--%"
+        if self._tray.config.show_percent() and metrics and metrics[0].unit == "%" and text != "--":
             text = f"{text}%"
         if self._tray.is_loading(inst.id) and not metrics:
             text = "…"
@@ -688,7 +709,8 @@ class StatusOverlay(QWidget):
         data = self._tray.data(inst.id)
         if data is None and self._tray.error(inst.id) is not None:
             return render.COLOR_RED
-        return render.status_color(data)
+        # 跟随勾选的可见指标判色(与状态栏/菜单同一口径)
+        return render.status_color(data, self._tray._visible_metrics(inst.id))
 
     @staticmethod
     def _num_font(text: str) -> QFont:
@@ -757,10 +779,11 @@ class StatusOverlay(QWidget):
             self._press_win_pos = None
             self._dragging = False
         if event.button() == Qt.LeftButton:
-            if self._embed_host is None:
-                self._press_pos = event.globalPos()
-                self._press_win_pos = self.pos()
-                self._dragging = False
+            # 嵌入模式同样记录起点:不记的话 mouseReleaseEvent 的左键分支整段跳过,
+            # 点账号块开不了详情窗、拖拽也不可用
+            self._press_pos = event.globalPos()
+            self._press_win_pos = self.pos()
+            self._dragging = False
         elif event.button() == Qt.RightButton:
             self._tray._show_menu()
 
@@ -775,6 +798,7 @@ class StatusOverlay(QWidget):
                 self._dragging = True
                 self.move(self._press_win_pos + delta)
                 self._tip.hide()
+                self._show_timer.stop()  # 悬停 120ms 内开始拖拽时,卡片不能在拖拽中弹出
                 self._hide_timer.stop()
                 return
 
@@ -829,7 +853,8 @@ class StatusOverlay(QWidget):
         for inst in self.overlay_instances():
             data = self._tray.data(inst.id)
             error = self._tray.error(inst.id)
-            color_name = render.status_color(data)
+            # 与面板 chip / 菜单同一口径:按用户勾选的可见指标判色
+            color_name = render.status_color(data, self._tray._visible_metrics(inst.id))
             if data is None and error is not None:
                 color_name = render.COLOR_RED
             color = status_color(color_name)
@@ -870,6 +895,15 @@ class StatusOverlay(QWidget):
         self._show_timer.stop()
         self._hide_timer.stop()
         self._tip.hide()
+
+    def _tip_entered(self) -> None:
+        """鼠标进入卡片:停止「离开面板即收起」的计时"""
+        self._hide_timer.stop()
+
+    def _tip_left(self) -> None:
+        """鼠标离开卡片:延迟收起(与离开面板同一节奏)"""
+        if self._tip.isVisible():
+            self._hide_timer.start(250)
 
     def leaveEvent(self, event) -> None:
         self._show_timer.stop()

@@ -16,7 +16,7 @@ class RECT(ctypes.Structure):
 
 
 def taskbar_rect() -> Optional[RECT]:
-    """任务栏(Shell_TrayWnd)矩形;拿不到返回 None"""
+    """主任务栏(Shell_TrayWnd)矩形;拿不到返回 None"""
     try:
         hwnd = ctypes.windll.user32.FindWindowW("Shell_TrayWnd", None)
         if not hwnd:
@@ -27,6 +27,32 @@ def taskbar_rect() -> Optional[RECT]:
         return rect
     except Exception:
         return None
+
+
+def _all_taskbar_rects() -> list[RECT]:
+    """全部任务栏矩形:主屏 Shell_TrayWnd + 副屏 Shell_SecondaryTrayWnd。
+
+    只查主任务栏的话,副屏上详情窗拿不到任务栏上沿,会压进副屏任务栏里。
+    """
+    rects: list[RECT] = []
+    main = taskbar_rect()
+    if main is not None:
+        rects.append(main)
+    try:
+        user32 = ctypes.windll.user32
+        user32.FindWindowExW.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p
+        ]
+        user32.FindWindowExW.restype = ctypes.c_void_p
+        hwnd = user32.FindWindowExW(None, None, "Shell_SecondaryTrayWnd", None)
+        while hwnd:
+            rect = RECT()
+            if ctypes.windll.user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(rect)):
+                rects.append(rect)
+            hwnd = user32.FindWindowExW(None, ctypes.c_void_p(hwnd), "Shell_SecondaryTrayWnd", None)
+    except Exception:
+        pass
+    return rects
 
 
 def set_dark_title_bar(hwnd, dark: bool = True) -> bool:
@@ -55,71 +81,14 @@ def taskbar_top_edge(screen_geo) -> Optional[int]:
     """底部任务栏的上沿坐标;仅当任务栏横跨该屏幕底部时返回,否则 None。
 
     screen_geo 传 QRect(目标屏幕 geometry),用于判断任务栏是否属于该屏幕。
+    主屏与副屏任务栏都查:副屏任务栏是独立的 Shell_SecondaryTrayWnd 窗口。
     """
-    rect = taskbar_rect()
-    if rect is None:
-        return None
-    overlaps_x = rect.left < screen_geo.right() and rect.right > screen_geo.left()
-    at_bottom = rect.top > screen_geo.center().y()
-    if overlaps_x and at_bottom:
-        return rect.top
+    for rect in _all_taskbar_rects():
+        overlaps_x = rect.left < screen_geo.right() and rect.right > screen_geo.left()
+        at_bottom = rect.top > screen_geo.center().y()
+        if overlaps_x and at_bottom:
+            return rect.top
     return None
-
-
-def is_taskbar_visible() -> bool:
-    """任务栏窗口当前是否可见。
-
-    自动隐藏时任务栏不可见,此时屏幕像素采到的不是任务栏颜色(可能是桌面或
-    全屏应用),拿它当底色会让面板颜色乱跳——调用方要据此跳过重采样。
-    """
-    try:
-        user32 = ctypes.windll.user32
-        user32.FindWindowW.restype = ctypes.c_void_p
-        user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
-        hwnd = user32.FindWindowW("Shell_TrayWnd", None)
-        if not hwnd:
-            return False
-        return bool(user32.IsWindowVisible(ctypes.c_void_p(hwnd)))
-    except Exception:
-        return False
-
-
-def get_taskbar_bg_color(default=(74, 79, 92)) -> tuple[int, int, int]:
-    """取任务栏实际显示色。
-
-    注意:Win11 任务栏是半透明亚克力材质,取任务栏自己的 DC 只会拿到黑色
-    (未合成的透明像素),必须用**屏幕 DC** 取合成后的真实颜色——那才是用户看到的。
-    在任务栏空白区(避开左右两端图标)多点采样取众数。
-    """
-    try:
-        user32 = ctypes.windll.user32
-        gdi32 = ctypes.windll.gdi32
-        rect = taskbar_rect()
-        if rect is None:
-            return default
-        hdc = user32.GetDC(None)  # 屏幕 DC:含亚克力合成后的最终颜色
-        if not hdc:
-            return default
-        try:
-            y = (rect.top + rect.bottom) // 2
-            width = rect.right - rect.left
-            samples: dict[tuple[int, int, int], int] = {}
-            for i in range(16):
-                # 任务栏中段偏右的空白区(用户的固定图标集中在左段)
-                x = rect.left + int(width * (0.52 + 0.012 * i))
-                color = gdi32.GetPixel(hdc, x, y)
-                if color == 0xFFFFFFFF:
-                    continue
-                rgb = (color & 0xFF, (color >> 8) & 0xFF, (color >> 16) & 0xFF)
-                samples[rgb] = samples.get(rgb, 0) + 1
-        finally:
-            # 必须成对释放:采样过程中抛异常会泄漏屏幕 DC(句柄耗尽后取色全黑)
-            user32.ReleaseDC(None, hdc)
-        if not samples:
-            return default
-        return max(samples.items(), key=lambda kv: kv[1])[0]
-    except Exception:
-        return default
 
 
 def embed_in_taskbar(hwnd) -> Optional[int]:

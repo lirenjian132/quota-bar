@@ -12,7 +12,9 @@ struct APIResponse: Codable {
 
 /// MiniMax 顶层响应里的 base_resp 字段, 非 0 表示 API 业务错误
 struct BaseResp: Codable {
-    let statusCode: Int
+    // optional: base_resp 存在但 statusCode 缺失/类型漂移时, 整个 APIResponse
+    // 解码失败会把 model_remains 一起丢掉 — 缺失按 0 (无业务错误) 论.
+    let statusCode: Int?
     let statusMsg: String?
 
     enum CodingKeys: String, CodingKey {

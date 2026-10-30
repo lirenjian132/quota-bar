@@ -152,7 +152,7 @@ class TrayApp(QObject):
         if not self.config.tray_icon_enabled():
             return
         for tray in self._trays.values():
-            tray.showMessage(get_i18n().t("app.name"), _STARTUP_MESSAGE(), msecs=5000)
+            tray.showMessage(get_i18n().t("app.name"), get_i18n().t("menu.startupBubble"), msecs=5000)
             return
 
     def _restart_timer(self) -> None:
@@ -232,7 +232,18 @@ class TrayApp(QObject):
         for result in results:
             iid = result.instance_id
             if not iid:
-                continue  # 整体失败的占位结果,无对应实例
+                # 整体失败的占位结果(线程池级异常):给所有「无数据无错误」的
+                # 账号挂上错误,否则 loading 消了却既无新数据也无任何提示
+                if result.error is not None:
+                    for it in self.config.instances():
+                        if (
+                            it.id not in self._data
+                            and it.id not in self._errors
+                            and self.config.is_enabled(it.id)
+                            and self.config.is_configured(it.id)
+                        ):
+                            self._errors[it.id] = result.error
+                continue
             if gens.get(iid) != self._gen.get(iid):
                 continue  # 旧代次结果:换 key/手动刷新后晚到的旧请求,丢弃
             if self.config.instance(iid) is None:
@@ -314,8 +325,14 @@ class TrayApp(QObject):
         数字由任务栏数字面板承载(16px 图标里塞数字既看不清又与面板重复);
         托盘只留一个安静的状态点,tooltip 里给出各账号的数值。
         """
-        data = self._data.get(instance_id) if instance_id else None
-        badge_color = QColor(_STATUS_COLORS.get(render.status_color(data), _STATUS_COLORS[render.COLOR_GRAY]))
+        # 与面板/菜单同一套取色:取数失败且无旧数据时也是红色,
+        # 否则菜单点是红的、托盘点却是灰的,同一账号两个颜色互相矛盾
+        if instance_id:
+            inst = self.config.instance(instance_id)
+            color_hex = self._account_color(inst) if inst else _STATUS_COLORS[render.COLOR_GRAY]
+        else:
+            color_hex = _STATUS_COLORS[render.COLOR_GRAY]
+        badge_color = QColor(color_hex)
 
         pixmap = QPixmap(_ICON_SIZE, _ICON_SIZE)
         pixmap.fill(Qt.transparent)
@@ -343,7 +360,8 @@ class TrayApp(QObject):
                 continue
             metrics = self._visible_metrics(inst.id)
             primary = render.tray_text(metrics[0], mode) if metrics else "--"
-            if metrics and metrics[0].unit == "%":
+            # tray_text 对 inf/NaN 返回 "--",别给它拼出 "--%"
+            if metrics and metrics[0].unit == "%" and primary != "--":
                 primary = f"{primary}%"
             line = f"{inst.display_name}: {primary}"
             if len(metrics) > 1:  # 第二指标放 tooltip
@@ -384,6 +402,13 @@ class TrayApp(QObject):
             self._show_menu()
 
     def _toggle_detail(self) -> None:
+        if self._detail is not None and self._detail._login_busy:
+            # 浏览器登录进行中:不能收起详情窗(等待框是子窗口,收了用户就没法点
+            # 「完成并提取」),把窗口提到前面即可
+            self._detail.show()
+            self._detail.raise_()
+            self._detail.activateWindow()
+            return
         if self._detail is not None and self._detail.isVisible():
             # 配置面板被程序化隐藏(点面板 chip、托盘左键):等同「取消」——
             # 否则新建的空壳账号不会被回收,详情窗下次打开还停在配置面板
@@ -392,6 +417,7 @@ class TrayApp(QObject):
             self._detail.hide()
             return
         self._ensure_detail_visible()
+        self._overlay.hide_tooltip()  # 悬停卡片不能短暂压在详情窗上
         self._detail.activateWindow()
         self.fetch_all_async()
 
@@ -400,6 +426,14 @@ class TrayApp(QObject):
 
         详情窗已开着时直接切换账号,不把它关掉再开;窗口不可见时再显示。
         """
+        if self._detail is not None and self._detail._login_busy:
+            # 浏览器登录进行中:不切账号、不写 active(否则托盘主图标会换成
+            # 别的账号,与"正在登录的账号"错位),只把窗口提到前面
+            self._overlay.hide_tooltip()
+            self._detail.show()
+            self._detail.raise_()
+            self._detail.activateWindow()
+            return
         if instance_id and self.config.instance(instance_id) is None:
             return
         # 点账号块开详情时,悬停卡片立刻收起,不能盖在详情窗上
@@ -421,7 +455,10 @@ class TrayApp(QObject):
             and self.data(instance_id) is None
         ):
             self.fetch_instance_async(instance_id)
-        self.fetch_all_async()
+        elif not instance_id:
+            # 泛入口(托盘图标/无指定账号)才全量拉;点具体账号只拉该账号——
+            # 每次点击都全量拉一轮,会让风控敏感平台(Stepfun/基元律动)多挨无谓请求
+            self.fetch_all_async()
 
     def _open_config_for(self, instance_id: str) -> None:
         """菜单「配置…」:打开该账号的配置面板"""
@@ -581,7 +618,11 @@ class TrayApp(QObject):
         data = self.data(inst.id)
         if data is None and self.error(inst.id) is not None:
             return _STATUS_COLORS[render.COLOR_RED]
-        return _STATUS_COLORS.get(render.status_color(data), _STATUS_COLORS[render.COLOR_GRAY])
+        # 按用户勾选的可见指标判色(与 macOS 对齐),不是按未展示的首指标
+        return _STATUS_COLORS.get(
+            render.status_color(data, self._visible_metrics(inst.id)),
+            _STATUS_COLORS[render.COLOR_GRAY],
+        )
 
     def _fill_accounts_menu(self, accounts_menu: QMenu) -> None:
         i18n = get_i18n()
@@ -748,18 +789,6 @@ class TrayApp(QObject):
             self._sync_check_group(sub, anchor)
         self._overlay.refresh()
 
-    def _toggle_overlay_embedded(self, checked: bool) -> None:
-        """切换「嵌入任务栏」与「浮层」两种形态"""
-        with self._config_write() as st:
-            self.config.set_overlay_embedded(checked)
-        if not st.ok:
-            return
-        if checked:
-            self._overlay.attach()
-        else:
-            self._overlay.detach()
-        self._overlay.refresh()
-
     def _set_display_mode(self, mode: str, sub: Optional[QMenu] = None) -> None:
         with self._config_write() as st:
             self.config.set_display_mode(mode)
@@ -768,6 +797,7 @@ class TrayApp(QObject):
         if sub is not None:
             self._sync_check_group(sub, mode)
         self._rebuild_trays()
+        self._overlay.refresh()  # 面板数值按显示模式渲染,模式切换要立刻重画
         self._reload_detail()
 
     def _set_refresh_interval(self, interval: RefreshInterval, sub: Optional[QMenu] = None) -> None:
@@ -790,6 +820,7 @@ class TrayApp(QObject):
         if sub is not None:
             self._sync_check_group(sub, locale)
         self._rebuild_trays()
+        self._overlay.refresh()  # 面板短标签分语言,切换要立刻重画(不能等下个刷新周期)
         self._reload_detail()
 
     @staticmethod
@@ -886,6 +917,10 @@ class TrayApp(QObject):
         对齐 macOS 版——新增后立刻弹配置框让用户填凭据;配置前取消就把
         空壳账号回收掉,不在菜单里堆积没配置的"幽灵账号"。
         """
+        if self._detail is not None and self._detail._login_busy:
+            # 登录进行中不允许加账号:配置面板被守卫挡着切不过去,新空壳账号
+            # 会变成回收不掉的幽灵
+            return
         with self._config_write() as st:
             inst = self.config.add_instance(platform)
         if not st.ok:
@@ -917,9 +952,12 @@ class TrayApp(QObject):
         self._on_config_changed()
 
     def _on_config_saved(self, instance_id: str) -> None:
-        """配置面板保存成功:不再是待回收的空壳账号"""
+        """配置面板保存成功:不再是待回收的空壳账号,并解除续期失败冷却"""
         if self._pending_instance_id == instance_id:
             self._pending_instance_id = None
+        # 新凭据解除 Stepfun 续期冷却:否则冷却期内跳过预刷新,access token
+        # 一过期就 401,刚保存的 key 像"没生效"
+        self.manager.clear_refresh_cooldown(instance_id)
 
     def _ensure_detail_visible(self) -> None:
         """确保详情窗已打开(不切换显隐)"""
@@ -932,6 +970,8 @@ class TrayApp(QObject):
 
     def _toggle_metric(self, instance_id: str, label: str, sub: QMenu) -> None:
         cfg = self.config
+        if cfg.instance(instance_id) is None:
+            return  # 账号在菜单开着时被删:与 rename/move/delete 同样的静默兜底
         current = list(cfg.enabled_metrics(instance_id))
         if label in current:
             current = [item for item in current if item != label]
@@ -973,8 +1013,9 @@ class TrayApp(QObject):
     # ------------------------------------------------------------ 配置变化联动
 
     def _on_config_changed(self) -> None:
-        """启用/钉选/顺序/指标/语言等变化:重建图标、刷新详情窗,缺数据的补拉一次"""
+        """启用/钉选/顺序/指标/语言等变化:重建图标、刷新面板与详情窗,缺数据的补拉一次"""
         self._rebuild_trays()
+        self._overlay.refresh()  # 删除/停用/排序/改指标后面板要立刻跟上,不能等下个刷新周期
         self._reload_detail()
         if self._needs_data():
             self.fetch_all_async()
@@ -1031,13 +1072,6 @@ class TrayApp(QObject):
 def _wrap_error(e: Exception) -> PlatformError:
     """把未预期异常包成网络错误,不拖垮整批"""
     return PlatformError(ErrorKind.NETWORK, f"{type(e).__name__}: {e}")
-
-
-def _STARTUP_MESSAGE() -> str:
-    """启动气泡文案。"""
-    if get_i18n().locale.startswith("zh"):
-        return "QuotaBar 已在系统托盘运行"
-    return "QuotaBar is running in the system tray"
 
 
 def _dot_icon(color: str, size: int = 10) -> QIcon:

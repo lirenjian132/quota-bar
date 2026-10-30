@@ -10,10 +10,11 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import TYPE_CHECKING, Optional
 
-from PyQt5.QtCore import QMimeData, QSize, Qt, pyqtSignal
+from PyQt5.QtCore import QEventLoop, QObject, QMimeData, QSize, Qt, pyqtSignal
 from PyQt5.QtGui import (
     QColor,
     QCursor,
@@ -77,6 +78,12 @@ def _clear_layout(layout) -> None:
             sub.deleteLater()
 
 
+class _BgBridge(QObject):
+    """后台线程 → GUI 线程的完成信号:结果经事件队列回来,循环退出发生在 GUI 线程"""
+
+    done = pyqtSignal()
+
+
 def _dot_icon(color: str, size: int = 10) -> QIcon:
     """账号切换条左侧的小状态点"""
     pixmap = QPixmap(size, size)
@@ -112,6 +119,10 @@ class DetailWindow(QDialog):
         self._api_key_text = ""
         # 配置面板的「保存」按钮:输入框内容变化时同步启用/禁用
         self._save_button: Optional[QPushButton] = None
+        # 浏览器登录进行中标记:防止等待期间再点一次「重新登录」开出第二个会话
+        self._login_busy = False
+        # 详情窗锚定的屏幕:首次显示时记下,内容变高重定位时不再追着鼠标换屏
+        self._anchor_screen = None
         self.setWindowTitle(self._i18n.t("app.name"))
         # Qt.Tool:不出现在任务栏/Alt+Tab,但仍保留标题栏与关闭按钮。
         # 普通 QDialog 会给任务栏多出一个按钮,用户反馈「怎么还出现个图标」。
@@ -212,6 +223,8 @@ class DetailWindow(QDialog):
 
     def show_account(self, instance_id: str) -> None:
         """显示指定账号(点任务栏 chip 的入口)"""
+        if self._login_busy:
+            return  # 浏览器登录进行中:不切走账号,否则提取的凭据会落错账号
         if self._config.instance(instance_id) is None:
             return
         if self._mode == "config":
@@ -233,6 +246,11 @@ class DetailWindow(QDialog):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        # 锚定「此刻鼠标所在」的屏幕:之后内容变高的重定位都固定在这块屏,
+        # 不然切账号窗口变高时会跳到鼠标新所在的另一块屏上
+        self._anchor_screen = (
+            QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        )
         if not self._pal.is_light:
             from .winutil import set_dark_title_bar
 
@@ -254,7 +272,8 @@ class DetailWindow(QDialog):
                 self._repositioning = False
 
     def _move_to_bottom_right(self) -> None:
-        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        # 用锚定屏幕(首次显示时记下),不追鼠标:避免内容变高时窗口"瞬移"到另一块屏
+        screen = self._anchor_screen or QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         if screen is None:
             return
         geo = screen.availableGeometry()
@@ -287,6 +306,8 @@ class DetailWindow(QDialog):
     # ------------------------------------------------------------ 整体构建
 
     def _build_ui(self) -> None:
+        # 窗口标题跟随语言(只在 __init__ 设一次的话,切语言后标题停留旧语言)
+        self.setWindowTitle(self._i18n.t("app.name"))
         # 整窗重建期间关掉刷新,一次画完再开:否则切账号时能看到中间态闪烁
         self.setUpdatesEnabled(False)
         try:
@@ -343,12 +364,17 @@ class DetailWindow(QDialog):
         self._root.addWidget(self._build_footer())
 
     def _ensure_selected(self) -> None:
-        enabled = [i for i in self._config.instances() if self._config.is_enabled(i.id)]
-        ids = {i.id for i in enabled}
-        if self._selected_id in ids:
+        """选中的账号还在(哪怕已停用)就保持不动;只有账号被删了才回落。
+
+        以前只在「已启用」集合里找:点菜单里停用账号的「查看详情」会被静默
+        重定向到另一个账号(用户以为窗口坏了)。macOS 版任何账号都能查看,对齐。
+        回落优先激活账号:托盘主图标显示的就是它,窗口打开时两者必须一致。
+        """
+        if self._selected_id is not None and self._config.instance(self._selected_id) is not None:
             return
+        enabled_ids = [i.id for i in self._config.instances() if self._config.is_enabled(i.id)]
         active = self._config.active_instance_id()
-        self._selected_id = active if active in ids else (enabled[0].id if enabled else None)
+        self._selected_id = active if active in enabled_ids else (enabled_ids[0] if enabled_ids else None)
 
     def _selected_instance(self) -> Optional[PlatformInstance]:
         self._ensure_selected()
@@ -383,16 +409,23 @@ class DetailWindow(QDialog):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
         selected = self._selected_id or self._config.active_instance_id()
+        disabled_hint = self._i18n.t("detail.disabled")
         for inst in self._config.instances():
-            if not self._config.is_enabled(inst.id):
-                continue
+            enabled = self._config.is_enabled(inst.id)
             btn = _ReorderButton(inst.id, inst.display_name)
             btn.setObjectName("accountChip")
             btn.setCheckable(True)
             btn.setChecked(inst.id == selected)
-            btn.setIcon(_dot_icon(self._account_color(inst)))
+            if enabled:
+                btn.setIcon(_dot_icon(self._account_color(inst)))
+            else:
+                # 停用账号也列出来(可点开看):灰点 + 灰字 + 提示,与启用账号区分
+                btn.setIcon(_dot_icon(status_color("gray", self._pal.is_light)))
+                btn.setStyleSheet(f"color: {self._pal.muted};")
+                btn.setToolTip(disabled_hint)
             btn.setIconSize(QSize(8, 8))
-            btn.setToolTip(self._i18n.t("detail.dragToReorder"))
+            if enabled:
+                btn.setToolTip(self._i18n.t("detail.dragToReorder"))
             btn.clicked.connect(lambda checked=False, iid=inst.id: self._switch_account(iid))
             row.addWidget(btn)
         row.addStretch(1)
@@ -402,7 +435,9 @@ class DetailWindow(QDialog):
         data = self._tray.data(inst.id)
         if data is None and self._tray.error(inst.id) is not None:
             return status_color("red", self._pal.is_light)
-        return status_color(render.status_color(data), self._pal.is_light)
+        return status_color(
+            render.status_color(data, self._tray._visible_metrics(inst.id)), self._pal.is_light
+        )
 
     def _reorder(self, source_id: str, target_id: str) -> None:
         ids = [i.id for i in self._config.instances()]
@@ -418,6 +453,8 @@ class DetailWindow(QDialog):
         self._tray._on_config_changed()
 
     def _switch_account(self, instance_id: str) -> None:
+        if self._login_busy:
+            return  # 登录进行中:切账号会让提取结果落到别的账号上
         if self._config.instance(instance_id) is None:
             return
         previous = self._selected_id
@@ -584,7 +621,9 @@ class DetailWindow(QDialog):
             shown = ratio if self._config.display_mode() == "remaining" else 1.0 - ratio
             bar = QProgressBar()
             bar.setRange(0, 1000)
-            bar.setValue(max(0, min(1000, int(shown * 1000))))
+            # 先钳制浮点再转 int:先 int 后钳制的话,inf/1e308 会在 int() 处抛异常,
+            # 详情窗直接构造失败
+            bar.setValue(int(max(0.0, min(1000.0, shown * 1000.0))))
             bar.setFixedHeight(4)
             bar.setTextVisible(False)
             bar.setStyleSheet(
@@ -596,7 +635,7 @@ class DetailWindow(QDialog):
         elif ratio is not None and metric.unit == "times":
             bar = QProgressBar()
             bar.setRange(0, 1000)
-            bar.setValue(max(0, min(1000, int(ratio * 1000))))
+            bar.setValue(int(max(0.0, min(1000.0, ratio * 1000.0))))
             bar.setFixedHeight(4)
             bar.setTextVisible(False)
             bar.setStyleSheet(
@@ -668,7 +707,9 @@ class DetailWindow(QDialog):
         v.addWidget(body)
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
-        if inst.platform_type.cookie_based():
+        # 「重新登录」只在未授权时出现:网络错误/API 错误让用户重登是无效指引
+        # (对齐 macOS 的 showsRenewSessionButton)
+        if inst.platform_type.cookie_based() and error.kind == ErrorKind.UNAUTHORIZED:
             relogin = QPushButton(self._i18n.t("popover.renewSession"))
             relogin.clicked.connect(
                 lambda checked=False, iid=inst.id: self._begin_relogin(iid)
@@ -724,7 +765,10 @@ class DetailWindow(QDialog):
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         refresh = QPushButton(self._i18n.t("menu.refreshNow"))
-        refresh.clicked.connect(self._tray.fetch_all_async)
+        # 与右键菜单的「立即刷新」同一语义:先清缓存再取数。
+        # Stepfun/基元律动的缓存 TTL 是 300 秒,直接连 fetch_all_async 的话
+        # 点了按钮也可能拿到 5 分钟前的旧数据。
+        refresh.clicked.connect(self._tray._on_refresh_now)
         row.addWidget(refresh)
         inst = self._selected_instance()
         configure = QPushButton(self._i18n.t("menu.configurePlatform"))
@@ -803,6 +847,33 @@ class DetailWindow(QDialog):
         self._open_config(instance_id)
         self._open_login(inst.platform_type)
 
+    def _run_bg(self, fn):
+        """在后台线程跑 fn,期间用 QEventLoop 保持界面响应,返回 fn 的结果。
+
+        浏览器登录的阻塞点全在这里走后台:浏览器启动等待(最长 20s)、CDP 提取
+        (8s + 15s)、进程收尾(terminate/wait/rmtree 重试)——以前全在 GUI 线程
+        同步执行,叠加起来最坏能冻住界面约一分钟,用户视角就是「应用卡死」。
+        fn 抛异常时原样重抛给调用方。
+        """
+        loop = QEventLoop()
+        box: dict = {}
+        bridge = _BgBridge()
+        bridge.done.connect(loop.quit)
+
+        def _worker():
+            try:
+                box["result"] = fn()
+            except BaseException as e:  # 线程里异常跨不过线程边界,装进结果里带回
+                box["result"] = e
+            bridge.done.emit()  # 排队到 GUI 线程:退出上面的循环
+
+        threading.Thread(target=_worker, daemon=True).start()
+        loop.exec_()
+        result = box.get("result")
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
     def _open_login(self, platform: PlatformType) -> None:
         from .browser_login import BrowserLoginSession, find_browser
 
@@ -810,37 +881,122 @@ class DetailWindow(QDialog):
         if find_browser() is None:
             QMessageBox.warning(self, i18n.t("app.name"), i18n.t("login.noBrowser"))
             return
-
-        session = BrowserLoginSession(platform)
-        if not session.start():
-            session.close()
-            QMessageBox.warning(self, i18n.t("app.name"), i18n.t("login.noBrowser"))
-            return
-
-        dlg = _WaitLoginDialog(self, platform.display_name())
-        accepted = False
-        credential = None
+        if self._login_busy:
+            return  # 上一次登录还在进行:防止开出第二个浏览器会话
+        self._login_busy = True
+        session = None
+        dlg = None  # 必须在 try 前初始化:构造阶段抛异常时 finally 会引用它
+        # 本次登录的落点账号:等待期间用户仍可能操作界面(show()+exec_() 不构成
+        # 真模态),提取结果必须写到发起登录的账号,不能写到"当前"账号
+        target_id = self._config_instance_id
         try:
-            accepted = dlg.exec_() == QDialog.Accepted
-            if accepted:
-                credential = session.credential()
+            session = BrowserLoginSession(platform)
+            dlg = _WaitLoginDialog(self, platform.display_name())
+            # 启动阶段就把等待框亮出来(浏览器最坏要等 20s,不亮像"点了没反应");
+            # 先非模态展示,启动完成后再 exec_ 转模态等用户点「完成并提取」
+            dlg.set_phase(i18n.t("login.starting"))
+            dlg.show()
+            try:
+                started = bool(self._run_bg(session.start))
+            except Exception:
+                started = False
+            if not started:
+                dlg.close()
+                # 与「找不到浏览器」区分:浏览器在,但被安全软件拦了/调试端口没起来
+                QMessageBox.warning(self, i18n.t("app.name"), i18n.t("login.startFailed"))
+                return
+            if not dlg.isVisible():
+                # 启动等待期间对话框被关掉:用户点「完成并提取」则继续走提取
+                # (提取不到会有 login.missing 提示),点取消才真正放弃
+                if dlg.result() != QDialog.Accepted:
+                    return
+            else:
+                dlg.set_phase(i18n.t("login.browserHint"))
+                # exec_ 前补应用级模态:show() 之后再 exec_() 不会让 Qt 重新进入模态,
+                # 等待期间主窗口仍可点(托盘弹出菜单也不受模态阻挡,真正的防线是
+                # _login_busy 守卫与落点校验)
+                dlg.setWindowModality(Qt.ApplicationModal)
+                if dlg.exec_() != QDialog.Accepted:
+                    return
+            try:
+                credential = self._run_bg(session.credential)
+            except Exception:
+                credential = None
+            if credential:
+                self._api_key_text = credential
+                # 提取成功立即落盘到发起登录的账号:否则用户点取消/直接关窗,
+                # 登录就白做了,新建账号还会被当空壳回收
+                self._apply_extracted_credential(target_id)
+                self._build_ui()
+            else:
+                QMessageBox.warning(
+                    self,
+                    i18n.t("login.missing.title"),
+                    i18n.t("login.missing.message"),
+                )
         finally:
-            session.close()
-        if not accepted:
+            # 收尾阶段的任何异常都不能吞掉 _login_busy 复位:否则登录功能永久
+            # 失效、配置面板楔死、窗口关不掉,只能重启应用
+            try:
+                if session is not None:
+                    self._run_bg_quiet(session.close)
+                if dlg is not None:
+                    dlg.deleteLater()  # 每次登录一个新对话框,用完销毁
+            finally:
+                self._login_busy = False
+
+    def _run_bg_quiet(self, fn) -> None:
+        """后台线程跑收尾步骤,异常静默(进程清理失败不该打断用户)"""
+        try:
+            self._run_bg(fn)
+        except Exception:
+            pass
+
+    def _apply_extracted_credential(self, target_id: Optional[str]) -> None:
+        """把浏览器提取到的凭据写到**发起登录时的账号**(不是"当前"账号)。
+
+        落点用捕获值:等待登录期间界面仍可操作(等待框并非真模态),若此时把
+        凭据写到 `_config_instance_id` 的当前值,会静默串到别的账号上。
+        落点账号已被取消/删除时明确告知用户,不能静默丢弃一次登录。
+        """
+        key = self._api_key_text.strip()
+        if not target_id or not key:
             return
-        if credential:
-            self._api_key_text = credential
-            self._build_ui()
-        else:
+        if self._config.instance(target_id) is None:
+            QMessageBox.warning(
+                self, self._i18n.t("app.name"), self._i18n.t("login.accountGone")
+            )
+            return
+        try:
+            self._config.set_api_key(target_id, key)
+        except KeyError:
+            QMessageBox.warning(
+                self, self._i18n.t("app.name"), self._i18n.t("login.accountGone")
+            )
+            return
+        except (OSError, TypeError, UnicodeEncodeError) as e:
             QMessageBox.warning(
                 self,
-                i18n.t("login.missing.title"),
-                i18n.t("login.missing.message"),
+                self._i18n.t("app.name"),
+                self._i18n.t("error.saveFailed", str(e)),
             )
+            return
+        if self._config_instance_id == target_id:
+            self._api_key_text = key
+        else:
+            # 面板已切到别的账号(理论上被登录期守卫挡住,这里兜底):只落到目标
+            # 账号,不污染当前账号的输入框
+            self._api_key_text = (
+                self._config.api_key(self._config_instance_id) if self._config_instance_id else ""
+            )
+        self._tray._on_config_saved(target_id)
+        self._tray.refresh_instance(target_id)
 
     def _open_config(self, instance_id: Optional[str]) -> None:
         if not instance_id:
             return
+        if self._login_busy:
+            return  # 登录进行中:不接受换账号配置(提取结果会写错账号)
         self._selected_id = instance_id
         self._config_instance_id = instance_id
         self._api_key_text = self._config.api_key(instance_id)
@@ -853,6 +1009,8 @@ class DetailWindow(QDialog):
             self._save_button.setEnabled(bool(text.strip()))
 
     def _cancel_config(self) -> None:
+        if self._login_busy:
+            return  # 等浏览器登录/提取期间不许取消:取消会删掉新建账号,提取结果无处可写
         instance_id = self._config_instance_id
         self._mode = "main"
         self._config_instance_id = None
@@ -874,6 +1032,13 @@ class DetailWindow(QDialog):
             return
         try:
             self._config.set_api_key(instance_id, key)
+        except KeyError:
+            # 实例在保存前一刻被删(竞态):凭据没写进去,退回主视图即可
+            self._mode = "main"
+            self._config_instance_id = None
+            self._api_key_text = ""
+            self._build_ui()
+            return
         except (OSError, TypeError, UnicodeEncodeError) as e:
             QMessageBox.warning(
                 self,
@@ -914,10 +1079,15 @@ class _ReorderButton(QPushButton):
             if (event.globalPos() - self._press_pos).manhattanLength() > 8:
                 mime = QMimeData()
                 mime.setText(self.instance_id)
-                drag = self.createDrag() if hasattr(self, "createDrag") else QDrag(self)
+                # QDrag 挂到窗口而不是本按钮:拖拽期间 UI 可能整体重建,
+                # 本按钮会被 deleteLater,drag 不能跟着它一起被销毁
+                drag = QDrag(self.window())
                 drag.setMimeData(mime)
-                drag.exec_(Qt.MoveAction)
+                # exec_ 之前清空状态、之后不再触碰 self:拖拽的嵌套事件循环里
+                # 重建 UI 会删掉本按钮,exec_ 返回后再访问 self 会抛 RuntimeError,
+                # PyQt5 在事件处理器里抛该异常会直接 abort 进程
                 self._press_pos = None
+                drag.exec_(Qt.MoveAction)
                 return
         super().mouseMoveEvent(event)
 
@@ -953,12 +1123,13 @@ class _WaitLoginDialog(QDialog):
         super().__init__(parent)
         i18n = get_i18n()
         self.setWindowTitle(i18n.t("login.title", platform_name))
-        self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
+        # Qt.Tool:登录等待期间不在任务栏/Alt+Tab 多出一个按钮
+        self.setWindowFlags(Qt.Tool | Qt.WindowStaysOnTopHint)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
-        label = QLabel(i18n.t("login.browserHint"))
-        label.setWordWrap(True)
-        layout.addWidget(label)
+        self._label = QLabel("")
+        self._label.setWordWrap(True)
+        layout.addWidget(self._label)
         row = QHBoxLayout()
         row.addStretch(1)
         cancel = QPushButton(i18n.t("common.cancel"))
@@ -970,6 +1141,10 @@ class _WaitLoginDialog(QDialog):
         row.addWidget(done)
         layout.addLayout(row)
         self.resize(420, 150)
+
+    def set_phase(self, text: str) -> None:
+        """切换提示文案(启动中 → 请登录)"""
+        self._label.setText(text)
 
 
 def _config_i18n_keys(platform: PlatformType) -> tuple[str, str]:

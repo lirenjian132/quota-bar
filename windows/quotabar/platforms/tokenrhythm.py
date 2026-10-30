@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..models import (
     LABEL_BALANCE,
@@ -26,7 +26,7 @@ from ..models import (
     UsageMetric,
 )
 from ..net import NetworkFunc, Request
-from ._base import ServiceCache, parse_json, send, to_float
+from ._base import ServiceCache, parse_json, send, to_float, to_int
 
 CACHE_TTL = 300.0  # 秒;中转站接口,刻意放缓防风控(与 macOS 版一致)
 
@@ -41,10 +41,11 @@ class TokenRhythmPlatformService:
         self._cache.clear()
 
     def fetch_usage(self, config: PlatformConfigData, network: NetworkFunc) -> PlatformUsageData:
+        # begin 在 read 之前:clear 落在两者之间时,旧凭据的在途结果不会以新代次写回
+        ver = self._cache.begin()
         cached = self._cache.read(CACHE_TTL)
         if cached is not None:
             return cached
-        ver = self._cache.begin()
 
         headers = {
             "Cookie": f"{config.auth_prefix}{config.api_key}",
@@ -87,8 +88,10 @@ class TokenRhythmPlatformService:
         return result
 
     def _parse_main(self, body: dict) -> tuple[float, float | None]:
-        if body.get("code") not in (0, "0", None):
-            msg = body.get("message") or f"code {body.get('code')}"
+        # code 宽松整数归一化:0 / "0" / 缺失都算成功;其它(含垃圾字符串)报业务错误
+        raw_code = body.get("code")
+        if raw_code is not None and to_int(raw_code) != 0:
+            msg = body.get("message") or f"code {raw_code}"
             raise PlatformError(ErrorKind.API, str(msg))
         data = body.get("data")
         if not isinstance(data, dict):
@@ -113,7 +116,8 @@ class TokenRhythmPlatformService:
                 Request(method="GET", url=aux_url, headers=headers, timeout=10.0),
             )
             body = parse_json(resp.text)
-            if body.get("code") not in (0, "0", None):
+            raw_code = body.get("code")
+            if raw_code is not None and to_int(raw_code) != 0:
                 return None
             raw = (body.get("data") or {}).get("summary", {}).get("nextExpiryAt")
             return _parse_iso8601(raw)
@@ -127,6 +131,10 @@ def _parse_iso8601(raw) -> float | None:
         return None
     try:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        # 无时区的 ISO 串按 UTC 解释:datetime.timestamp() 对 naive 值用本地时区,
+        # 会把北京时间用户的到期日算差 8 小时
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
         return dt.timestamp()
     except ValueError:
         return None

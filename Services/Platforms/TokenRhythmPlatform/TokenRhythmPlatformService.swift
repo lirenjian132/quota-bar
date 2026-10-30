@@ -4,7 +4,8 @@ import Foundation
 // 非公开 API: 字段结构以前端 bundle 逆向实测为准 (2026-09).
 // 金额字段是字符串形式的 8 位小数 ("253.76250848"), 保留 Double 解析, 显示层取整.
 struct TokenRhythmWalletResponse: Codable {
-    let code: Int
+    // optional: 上游缺 code/类型漂移时不再让整个响应解码失败, 业务侧按失败论
+    let code: Int?
     let message: String?
     let data: TokenRhythmWalletData?
 }
@@ -20,7 +21,7 @@ struct TokenRhythmWalletData: Codable {
 // GET /api/wallet/expiring-credits 响应: 赠金是逐笔发放的, 每笔各自有到期日.
 // summary.nextExpiryAt 是全钱包最早一笔的到期时刻 — 到期该笔剩余额蒸发.
 struct TokenRhythmExpiringResponse: Codable {
-    let code: Int
+    let code: Int?
     let message: String?
     let data: TokenRhythmExpiringData?
 }
@@ -85,8 +86,8 @@ final class TokenRhythmPlatformAPIService: PlatformAPIService {
         }
 
         guard httpResponse.statusCode == 200 else {
-            let responseString = String(data: data, encoding: .utf8) ?? "unable to decode"
-            throw PlatformError.networkError(config.platformType, "HTTP \(httpResponse.statusCode): \(responseString.prefix(200))")
+            // 只报状态码, 不回显响应体: 代理/网关可能把请求头(含 cookie)回显进错误体
+            throw PlatformError.networkError(config.platformType, "HTTP \(httpResponse.statusCode)")
         }
 
         let walletResponse: TokenRhythmWalletResponse
@@ -97,8 +98,11 @@ final class TokenRhythmPlatformAPIService: PlatformAPIService {
         }
 
         // 业务码非 0 (如 session 半失效): 透出服务端 message, 比笼统报错有用.
+        // code 缺失按失败论 (宁严勿松): 分不清响应是否完整时不要展示可疑余额.
         guard walletResponse.code == 0 else {
-            let message = walletResponse.message?.isEmpty == false ? walletResponse.message! : "code \(walletResponse.code)"
+            let message = walletResponse.message?.isEmpty == false
+                ? walletResponse.message!
+                : "code \(walletResponse.code ?? -1)"
             throw PlatformError.apiError(config.platformType, message)
         }
 

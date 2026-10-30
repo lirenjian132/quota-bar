@@ -27,11 +27,20 @@ cookie 型平台(Stepfun/基元律动)已支持「浏览器登录取凭据」:�
 
 ## 安装与运行
 
-```bash
+```bat
 cd windows
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python run.py
+```
+
+(Git Bash 用户把 `.venv\Scripts\python` 换成 `./.venv/Scripts/python.exe`。)
+
+开发/测试/打包另需 `requirements-dev.txt`(pytest + PyInstaller):
+
+```bat
+.venv\Scripts\pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest tests/ -q
 ```
 
 ## 凭据获取方式
@@ -52,7 +61,7 @@ python -m venv .venv
 
 ## 开发
 
-```bash
+```bat
 cd windows
 .venv\Scripts\python -m pytest tests/ -q
 ```
@@ -76,13 +85,13 @@ tests/            pytest 单测
 
 用 PyInstaller 打成 onedir,产物是 `QuotaBar.exe` + `_internal/`。
 
-```bash
+```bat
 cd windows
-.venv\Scripts\pyinstaller.exe --noconfirm --clean --onedir --windowed \
-  --name QuotaBar --icon Resources/quota-bar.ico \
-  --add-data "Resources;Resources" \
-  --distpath <输出目录> --workpath <中间目录> run.py
+.venv\Scripts\python -m PyInstaller --noconfirm --clean QuotaBar.spec
 ```
+
+打包参数固化在 `QuotaBar.spec`(已入库);要改参数就改 spec,不要再手敲 CLI
+(两套事实源容易漂移)。spec 默认输出到 `dist/QuotaBar/`。
 
 **在含中文的路径下构建会失败**,报 `Qt plugin directory '.../??/...' does not exist`:
 Qt5 的 `QLibraryInfo.location()` 会把路径里的非 ASCII 字符转成 `?`,PyInstaller
@@ -90,7 +99,7 @@ Qt5 的 `QLibraryInfo.location()` 会把路径里的非 ASCII 字符转成 `?`,P
 
 ```bash
 cp -r .venv/Lib/site-packages/PyQt5 C:/qbpyqt/          # 复制到 ASCII 路径
-PYTHONPATH=C:/qbpyqt .venv/Scripts/pyinstaller.exe ...   # 同上参数
+PYTHONPATH=C:/qbpyqt .venv/Scripts/python -m PyInstaller --noconfirm --clean QuotaBar.spec
 ```
 
 安装:把产物整个目录放到 `E:\Apps\QuotaBar`(或任意路径)即可,数据目录仍是

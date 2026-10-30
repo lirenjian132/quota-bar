@@ -9,8 +9,17 @@ final class PlatformConfigStore {
     private(set) var apiBaseURLInternational: String?
     private(set) var authHeader: String
     private(set) var authPrefix: String
-    private(set) var apiKey: String?
+    /// 凭据内存值. 读写都走 writeLock: 自动刷新在 TaskGroup 子线程做 CAS 比较,
+    /// 用户保存在主线程写 —— 裸读会被插队, CAS 的左值读到旧值就会把用户的新
+    /// 凭据覆盖掉 (P1 审查: "改完 key 自己变回去" 的残余窗口).
+    private var _apiKey: String?
     private(set) var region: String  // "domestic" or "international"
+
+    var apiKey: String? {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        return _apiKey
+    }
 
     private let defaultsKey: String
     private let keychain: KeychainStoring
@@ -23,8 +32,30 @@ final class PlatformConfigStore {
     private let writeLock = NSLock()
 
     var isConfigured: Bool {
-        guard let key = apiKey else { return false }
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        guard let key = _apiKey else { return false }
         return !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 原子 CAS 写回 (自动刷新专用): 仅当当前凭据仍等于 expected 时才落 fresh.
+    /// 比较与写入在同一把锁内完成, 用户在刷新在途时保存的新 key 不会被
+    /// 旧凭据刷出的串覆盖 (与 Windows 版 config.set_api_key 的锁内校验同口径).
+    @discardableResult
+    func casAPIKey(expected: String, fresh: String) -> Bool {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        guard _apiKey == expected else { return false }
+        do {
+            try keychain.set(fresh, account: instance.id)
+            _apiKey = fresh
+            save()
+            clearPlaintextAPIKeyInDefaults()
+            return true
+        } catch {
+            // 与 setAPIKey 同策略: 不谎报成功, 内存保持原值
+            return false
+        }
     }
 
     init(instance: PlatformInstance, keychain: KeychainStoring = AppEnvironment.makeKeychain(), userDefaults: UserDefaults = AppEnvironment.defaults) {
@@ -45,14 +76,17 @@ final class PlatformConfigStore {
     }
 
     func toConfigData() -> PlatformConfigData {
-        PlatformConfigData(
+        // 多字段一致性快照: 逐字段裸读可能拼出"一半新一半旧"的配置
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        return PlatformConfigData(
             platformType: platformType,
             instanceID: instance.id,
             displayName: instance.displayTitle,
             apiBaseURL: apiBaseURL,
             authHeader: authHeader,
             authPrefix: authPrefix,
-            apiKey: apiKey ?? "",
+            apiKey: _apiKey ?? "",
             region: region,
             apiBaseURLInternational: apiBaseURLInternational
         )
@@ -70,7 +104,7 @@ final class PlatformConfigStore {
         defer { writeLock.unlock() }
         do {
             try keychain.set(trimmed, account: instance.id)
-            apiKey = trimmed
+            _apiKey = trimmed
             // Persist non-secret fields with empty api_key
             save()
             clearPlaintextAPIKeyInDefaults()
@@ -84,7 +118,7 @@ final class PlatformConfigStore {
         defer { writeLock.unlock() }
         do {
             try keychain.delete(account: instance.id)
-            apiKey = nil
+            _apiKey = nil
             save()
             clearPlaintextAPIKeyInDefaults()
         } catch {
@@ -93,6 +127,10 @@ final class PlatformConfigStore {
     }
 
     func setRegion(_ newRegion: String) {
+        // 与 toConfigData 的持锁读配对:不锁的话自动刷新子线程可能读到撕裂的
+        // "新 region + 旧 api_base_url" 组合
+        writeLock.lock()
+        defer { writeLock.unlock() }
         region = newRegion
         save()
     }
@@ -129,7 +167,7 @@ final class PlatformConfigStore {
 
         if let keychainKey = try? keychain.get(account: instance.id),
            !keychainKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            apiKey = keychainKey
+            _apiKey = keychainKey
             if plaintextOrNil != nil {
                 clearPlaintextAPIKeyInDefaults()
             }
@@ -139,22 +177,22 @@ final class PlatformConfigStore {
         if let plaintextOrNil {
             do {
                 try keychain.set(plaintextOrNil, account: instance.id)
-                apiKey = plaintextOrNil
+                _apiKey = plaintextOrNil
                 clearPlaintextAPIKeyInDefaults()
             } catch {
                 // Keep plaintext in defaults; still expose for this session
-                apiKey = plaintextOrNil
+                _apiKey = plaintextOrNil
             }
             return
         }
 
-        apiKey = nil
+        _apiKey = nil
     }
 
     private func loadAPIKeyFromKeychainOnly() {
         if let keychainKey = try? keychain.get(account: instance.id),
            !keychainKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            apiKey = keychainKey
+            _apiKey = keychainKey
         }
     }
 

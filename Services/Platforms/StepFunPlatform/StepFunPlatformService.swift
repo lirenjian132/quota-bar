@@ -5,7 +5,9 @@ import Foundation
 // 经实测验证 (2026-09). 套餐是月 credits 池制: credit_buckets 给绝对量,
 // subscription_credit_left_rate 是百分比剩余.
 struct StepFunRateLimitResponse: Codable {
-    let status: Int
+    // 非 optional 的标量字段在上游漂移 (字段缺失/类型变化) 时会让整个响应
+    // 解码失败, 用户只会看到费解的"解析错误" — 业务判断交给下方 status 比较.
+    let status: Int?
     let desc: String?
     let planCreditRateLimit: StepFunPlanCreditRateLimit?
     // 非 credit 套餐族 (plan_family != 2) 没有 credits 池, 用两个窗口剩余率兜底.
@@ -43,7 +45,7 @@ struct StepFunPlanCreditRateLimit: Codable {
 
 // GET /api/step.openapi.devcenter.Dashboard/GetStepPlanStatus 响应.
 struct StepFunPlanStatusResponse: Codable {
-    let status: Int
+    let status: Int?
     let desc: String?
     let subscription: StepFunSubscription?
 }
@@ -90,7 +92,7 @@ final class StepFunPlatformAPIService: PlatformAPIService {
         let rateLimit = try await request(config: config, network: network, method: "QueryStepPlanRateLimit") as StepFunRateLimitResponse
         // status != 1 是业务错误 (账户停用/欠费): 透出 desc, 与其它平台报 apiError 的做法一致.
         guard rateLimit.status == validSubscriptionStatus else {
-            let message = rateLimit.desc?.isEmpty == false ? rateLimit.desc! : "status \(rateLimit.status)"
+            let message = rateLimit.desc?.isEmpty == false ? rateLimit.desc! : "status \(rateLimit.status ?? -1)"
             throw PlatformError.apiError(config.platformType, message)
         }
 
@@ -227,8 +229,9 @@ final class StepFunPlatformAPIService: PlatformAPIService {
             throw PlatformError.unauthorized(config.platformType)
         }
         guard httpResponse.statusCode == 200 else {
-            let responseString = String(data: data, encoding: .utf8) ?? "unable to decode"
-            throw PlatformError.networkError(config.platformType, "HTTP \(httpResponse.statusCode): \(responseString.prefix(200))")
+            // 只报状态码, 不回显响应体: 若某层代理/网关把请求头(含 cookie)回显进
+            // 错误体, 原样拼进文案会被用户截图外传 (错误信息会展示在弹窗里)
+            throw PlatformError.networkError(config.platformType, "HTTP \(httpResponse.statusCode)")
         }
 
         do {

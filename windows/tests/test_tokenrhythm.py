@@ -33,15 +33,25 @@ def summary_payload(**overrides) -> dict:
     return body
 
 
-def expiring_payload(next_expiry_at="2026-12-26T15:20:56.281Z") -> dict:
+def _far_future_expiry_iso(days: float = 60) -> str:
+    """动态生成未来到期时刻:写死日期是定时炸弹,日历一到测试必红"""
+    import time as _time
+
+    return _time.strftime("%Y-%m-%dT%H:%M:%S.000Z", _time.gmtime(_time.time() + days * 86400))
+
+
+def expiring_payload(next_expiry_at=None) -> dict:
+    if next_expiry_at is None:
+        next_expiry_at = _far_future_expiry_iso()
     return {"code": 0, "message": "ok", "data": {"summary": {"nextExpiryAt": next_expiry_at}}}
 
 
 def test_normal_fetch_with_expiry(tmp_path):
     cfg, inst = setup_instance(tmp_path)
+    iso = _far_future_expiry_iso()
     net = FakeNetwork(
         json_response(summary_payload()),
-        json_response(expiring_payload()),
+        json_response(expiring_payload(iso)),
     )
     data = TokenRhythmPlatformService().fetch_usage(cfg.config_data(inst.id), net)
 
@@ -50,7 +60,7 @@ def test_normal_fetch_with_expiry(tmp_path):
     assert abs(m.current_value - 253.76250848) < 1e-9  # 字符串余额解析
     assert m.total_value is None
     assert m.unit == "CNY"
-    assert m.reset_time == _parse_iso8601("2026-12-26T15:20:56.281Z")  # 辅端点到期时刻
+    assert m.reset_time == _parse_iso8601(iso)  # 辅端点到期时刻
 
     # 鉴权:tr_session= 裸值拼接
     req = net.requests[0]
@@ -84,7 +94,7 @@ def test_low_balance_unhealthy(tmp_path):
     cfg, inst = setup_instance(tmp_path)
     net = FakeNetwork(
         json_response(summary_payload(data={"availableBalanceCny": "5.0"})),
-        json_response(expiring_payload("2027-01-01T00:00:00.000Z")),
+        json_response(expiring_payload()),  # 动态远期到期:只让「低余额」触发不健康
     )
     data = TokenRhythmPlatformService().fetch_usage(cfg.config_data(inst.id), net)
     assert not data.is_healthy

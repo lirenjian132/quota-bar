@@ -2,7 +2,7 @@
 
 本项目的所有重要变更记录。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
-## [2.2.0-win.2] - 未发布
+## [2.2.0-win-m2] - 未发布
 
 > Windows 移植第二阶段：界面按用户反馈重做（无底色面板、单账号详情、分组菜单），并补上 Stepfun 会话自动续期。
 
@@ -31,8 +31,24 @@
 - **详情窗切换账号闪**：整窗重建期间关闭刷新（`setUpdatesEnabled(False)`）、窗口按不透明自绘、内容指纹不变时跳过重建
 - **详情窗/菜单压到任务栏下面**：详情窗在 `resizeEvent`（尺寸真正更新后）重新贴任务栏上沿；右键菜单定位夹到 `availableGeometry` 内
 - **左键详情窗在任务栏多出一个按钮**：普通 QDialog 会进任务栏 → 改为 `Qt.Tool`（不进任务栏/Alt+Tab，仍保留标题栏和关闭按钮）
+- **四席全量审查修复（Windows 侧，222 项测试钉住）**：
+  - **配置读取的瞬时 IO 错误不再被当成"首次运行"**：同步客户端占位/杀软扫描造成的读失败若被当作"文件不存在"，后续任意一次保存会把账号+凭据整体覆盖；现在区分 `FileNotFoundError` 与其他 OSError，先重试、仍失败把原文件挪到 `.unreadable` 保留现场
+  - **浏览器登录不再冻结界面**：启动浏览器（最长 20s）、CDP 提取、进程收尾全在 GUI 线程同步执行，最坏冻结约 1 分钟；改为后台线程 + QEventLoop，等待框分「启动中/请登录」两态，并防重入
+  - **浏览器启动失败有提示了**：`QMessageBox.warning` 少传 parent 参数必抛 TypeError，用户永远看不到提示；另区分「未找到浏览器」与「启动失败（可能被安全软件拦截）」两种文案，并补用户级 Chrome/Edge 安装路径候选
+  - **登录提取成功立即落盘**：此前只填输入框，用户点取消/关窗就白登了（新建账号还会被当空壳回收）；对齐 macOS 自动保存
+  - **停用账号可查看详情**：点停用账号的「查看详情」不再被静默重定向到别的账号（账号切换条列出停用账号，灰点灰字）
+  - **配置变化后面板立刻刷新**：删除/停用/排序/改指标/切显示模式后任务栏面板不再保留旧内容到下个刷新周期
+  - 详情窗「立即刷新」与右键菜单同语义（先清 300s 缓存再取数）；错误卡「重新登录」只在未授权时出现（网络错误引导重登是无效指引）；inf/NaN 数值不再拼出「--%」；托盘图标取数失败也变红（与菜单/面板同色）；整批取数失败给无数据账号挂错误提示
+  - **凭据跨域重定向外泄封堵**：requests 默认跟随重定向会把手工 Cookie 头原样发给跳转目标主机，`allow_redirects=False` 封死
+  - 数据自愈补强：加载时按 id 去重账号、`add_instance` 显示名与改名同口径消毒（代理字符/换行）、`set_api_key` 校验实例存在（防删除竞态留孤儿 key）、勾选指标去重、排序输入去重；超深嵌套 JSON 报「解析错误」不再被兜成「网络错误」
+  - 详情窗重定位不再追鼠标换屏（锚定首次显示的屏幕）；副屏任务栏（`Shell_SecondaryTrayWnd`）上沿可识别，详情窗不压副屏任务栏；Win10 左右侧竖排任务栏下面板贴任务栏内侧；悬停卡片宽度按屏幕封顶；stale 标记进悬停内容指纹（刷新失败橙点能出现）；嵌入模式左键恢复点击
+  - 测试/脚本/打包：修掉写死未来日期的「日期炸弹」测试；UI 测试不再拿假 key 打真实生产接口（第二轮复查又发现新用例漏了 FakeNetwork 注入，已补并加严格模式回归）；删账号回滚测试改到真正覆盖目标分支（并补「恢复写成功」分支）；conftest 全局兜底 `QUOTABAR_HOME` 隔离；appcast 生成插入与替换两条路径都做 XML 转义（第二轮复查发现替换路径仍裸拼，已是第三处修复并补 `&`/引号用例 + ElementTree 合法性断言）；appcast 测试与包装脚本在 Windows 可跑（`wc -c` + Python 3.9+ 解释器探测）；`package-dmg.sh` 版本号改读 project.yml 单一事实源（第二轮复查修正路径拼接与引号剥离）+ 工具存在性检查；`windows/QuotaBar.spec` 入库（`.gitignore` 加白名单）、依赖版本钉死、`requirements-dev.txt` 补 PyInstaller、README 开发/打包段落同步
+  - 第二轮四席复查后的补修：`_ensure_selected` 回落分支第一版把 `active in enabled` 写成 str 与实例列表比较（恒 False，回落永远选第一个账号而非激活账号）；悬停指纹测试恒真（原地改对象）；余额型格式化漏挡离谱有限值（1e300 → 几百位数字）；`_auto_save_credential` 漏接 `KeyError`；`_set_locale` 不刷新面板；登录启动阶段等待框不可见（20s 无反馈像"点了没反应"）；stepfun_refresh 两处 `json.loads` 未捕 `RecursionError`；`.unreadable` 隔离文件名固定会覆盖上次现场（改带序号）；`_toggle_metric` 菜单回调对已删账号无兜底
+  - 对抗审查（第 1 轮）后的补修：`windows/pytest.ini` 把 `PytestUnhandledThreadExceptionWarning` 固化为错误（后台线程崩溃不再静默绿）；appcast 替换路径支持单引号 URL 并在写盘前回读校验（此前格式异常时静默不改却报成功）；appcast 测试从"XML 能解析"升级为属性值断言 + 空 appcast 插入 + 单引号 URL + marketing 含 `&` 的用例；补 `_on_timer`、`_fetch_cookies`（CDP 提取）、状态色 10%/50% 与余额 1000 边界的测试；`package-dmg.sh` 版本格式校验与行尾注释剥离；README 命令块标注 `bat` 并给 Git Bash 写法；`docs/release-process.md` 删掉"同步 package-dmg.sh 硬编码版本"的过期指引
+  - 对抗审查（第 1 轮，UI 层）后的补修：**登录等待期间的状态保护**——`show()` 后再 `exec_()` 不会让 Qt 真正模态，等待浏览器登录的几分钟里用户点托盘/切账号会让提取结果静默丢弃或写进别的账号；现在登录期间拒绝取消/切账号/开别的配置（托盘左键只把窗口提到前面）、提取结果写到**发起登录的账号**（与当前面板账号解耦）、落点账号已删时明确弹窗告知、等待框补应用级模态与 `Qt.Tool`（不占任务栏）、用完销毁；**拖拽排序期间 UI 重建导致进程崩溃**——`QDrag` 改挂窗口并清空状态后再 `exec_`，拖拽返回后不再触碰可能已被 deleteLater 的按钮（PyQt5 在事件处理器里抛 RuntimeError 会直接 abort 进程）；**悬停卡片可悬停**——卡片不再透明传鼠标，进入卡片停止收起计时、离开再计时（此前鼠标一靠近卡片就消失，主交互实际不可用），拖拽开始时同时取消悬停弹出计时
+  - 对抗审查（第 1 轮，核心层）后的补修：**读失败策略重做**——配置文件读不出来时不再改名隔离，而是按只读默认值运行、**拒绝一切保存**并在启动时弹可见提示（改名隔离会把"重启自愈"变成"重启仍空配置 + 下次保存覆盖真实数据"）；globals 白名单化（500 层嵌套值不再让启动崩在 `deepcopy`）、`overlay_pos` 的 Infinity/超大值防护、启动期异常弹窗（不再静默闪退）；孤儿凭据参与 id 分配（settings 丢失后新账号不会继承旧账号的 key）；`compare_and_set_api_key` 原子 CAS（比较与写入同一临界区）；加载时去重 `enabled_metrics`（防指标菜单死锁）；GLM 同 label 去重 + `unit` 字符串归一化，MiniMax/Stepfun/TokenRhythm 的 status/code 字符串归一化，TokenRhythm 无时区 ISO 按 UTC 解释；`exp` 超大整数不再抛 OverflowError；删除降级时同步清快照（已删凭据不会"复活"）；状态点颜色改为跟随勾选的可见指标（与 macOS 对齐）；取数缓存 `begin` 提前到 `read` 之前（换 key 与在途请求交错时旧结果不再写进新代次缓存）；i18n 资源表结构校验；平台模板与内置默认值合并（部分模板不再让账号永远"未配置"）；`metric_ratio` 拒绝离谱有限值、详情窗进度条先钳制再转 int（1e308 不再崩详情窗）、倒计时封顶 9999 天；GLM/MiniMax 重置时间戳加合理性区间
 
-## [2.2.0-win.1] - 未发布
+## [2.2.0-win-m1] - 未发布
 
 > Windows 移植第一阶段（M1）：基于本分支 macOS 版功能对齐，Python 3.14 + PyQt5 重写，代码位于 `windows/` 子目录（Swift 原版不动）。跨平台开发约定见 `windows/README.md`。
 
@@ -208,6 +224,18 @@
 - **同实例 Stepfun 会话双刷新 POST（P1）**：预刷新无单飞门控，`saveAPIKey` 后的新 fetch 与 `fetchAllUsage` 在途可对同一账号双发 RefreshToken（多耗一次令牌轮换，且两次写回竞态）。修复：`PlatformManager` per-instance in-flight 刷新任务字典（仿 services 字典 + serviceLock 模式），已有在途则 await 复用其结果，任务结束摘除字典项；门控键带凭据维度（在途刷新期间换了新凭据时不误复用旧结果，否则新凭据会被旧凭据刷出的串覆盖）；与 CAS 叠加后落库值仍一致
 - **Stepfun `exp` 契约漂移静默退化（P1）**：JWT payload 的 `exp` 只接受 JSON 数字，服务端改成字符串 `"1790000000"` 时静默不刷新，拖到主请求 401 才暴露。修复：数字优先、字符串 `Double(s)` fallback；非数字字符串仍按"无 exp"处理
 - Stepfun 预刷新接入处同一凭据解析两遍（needsRefresh + refresh 各 parse 一次）合并为一次 parse，`needsRefresh` 增加接收已解析结果的重载；HTTP 200 但 `accessToken` 缺失/null 判刷新失败不阻断主请求（原无测试覆盖，已补齐，含 `refreshToken` 缺失/null 同路径）
+- **四席全量审查修复（macOS 侧）**：
+  - **状态栏重复 label 闪退（P0）**：上游返回两条同 label 指标时 `visibleMetrics` 的 `Dictionary(uniqueKeysWithValues:)` 触发 precondition failure 直接崩；改为容忍重复（保留第一条），GLM service 在源头按 label 去重（排序前、保留响应首条）
+  - **状态栏圆点与勾选指标脱节**：`statusColor` 只看原始 `metrics.first`（恒为 five_hour），只勾选 MCP 月度等指标时圆点颜色与展示数字矛盾；改为按 `visibleMetrics` 判色
+  - **实例列表解码失败被当作"无数据"**：`PlatformInstanceStore` 解码失败会跑 legacy 迁移并覆写用户实例列表（多账号配置静默清空且每次启动重放）；改为先把坏数据备份到 `quotabar.instances.bak` 再迁移兜底
+  - **FileKeyStore 原子写的 0644 窗口**：`Data.write(.atomic)` 的临时文件按 umask 创建，rename 后到 chmod 前同机其他用户可读 keys.json；改为自建 0600 临时文件再原子替换，权限从创建起即正确
+  - **Keychain 迁移的读错误改为显式分支**：开机启动且未解锁时 Keychain 报 `errSecInteractionNotAllowed`；任何非成功读取都不删除 Keychain 条目、下次启动（已解锁）重试（旧代码经 `try?` 恰好也是这个行为，本次把隐性路径改为显式分支并加注释，防后续修改把 else 与删除逻辑接错）
+  - **响应标量字段 optional 化**：GLM `code/msg/success`、MiniMax `BaseResp.statusCode`、Stepfun `status` **缺失/为 null** 时不再让整个响应解码失败（GLM `success` 缺失按失败论，MiniMax `statusCode` 缺失按 0 论）。注：上游把标量**序列化成字符串**（如 `"1"`）的情况在 macOS 侧仍会整包解码失败——Windows 已用 `to_int` 宽化并有测试，macOS 待跟进（需要给各响应体写宽松解码，见待办）
+  - **错误文案不再回显响应体**：非 2xx 错误只报状态码，防代理/网关把带 cookie/key 的请求头回显进错误体后被截图外传
+  - **Stepfun 刷新失败冷却**：refresh token 失效后 5 分钟内不再每 60s 白打一次 RefreshToken POST；CAS 比较与写入收进 `PlatformConfigStore` 写锁（`casAPIKey`），消除"读比较与写回之间被用户保存插队"的纳秒窗口；apiKey 读取与 `toConfigData` 快照同样加锁
+  - 杂项：URLSession 显式 `reloadIgnoringLocalCacheData`（防同平台多账号命中 URLCache 串显）；`item.button == nil` 时钉选 item 仍登记防状态栏空槽泄漏
+  - 对抗审查（第 1 轮）后的补修：`FileKeyStore` 的目录替换防护（目录霸占 keys.json 时抛错，保住"写失败→内存回滚"不变式）；`replaceItemAt` 改用 `.usingNewMetadataOnly`（默认行为会把旧文件的宽松权限贴回新文件，0600 落空）；StepFun 刷新失败冷却在用户保存/重登新凭据时清除（否则刚重登成功也会因冷却跳过预刷新、access token 一过期就 401）
+  - 对抗审查（第 1 轮，终审）后的补修：**`FileKeyStore` 读失败进入只读模式**——keys.json 被同步工具/杀软占用或内容损坏时，旧逻辑按空缓存继续跑，用户保存任意一个 key 就会把整份只含该 key 的缓存写回、其余账号凭据永久消失；现在读失败/解码失败一律拒绝写盘（`isReadOnly`），损坏内容另存 `keys.json.bak`；`delete()` 的写盘失败回滚改为恢复旧值（旧实现写 nil，等于没回滚，后续写盘会把磁盘上的 key 静默删掉）；`persistLocked` 的临时文件名改用 `ProcessInfo.processInfo.processIdentifier`（`getpid` 依赖 Darwin 模块透出，是唯一硬编译风险）；刷新冷却改用世代号（用户换 key 后，在途刷新失败不再重新武装冷却）；实例列表损坏时先尝试用 `.bak` 修复主键、解码成功但为空视为合法状态（不再整批复活默认账号）；无 button 的钉选 item 不再被选为右键菜单宿主（菜单会静默不弹）；`package-dmg.sh` 版本键缺失时 `grep` 非零不再被 `pipefail` 提前终止（友好报错可达）
 
 ## [2.0.4] - 2026-07-16
 

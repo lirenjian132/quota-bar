@@ -89,7 +89,13 @@ protocol NetworkService {
 
 class URLSessionNetworkService: NetworkService {
     func data(from request: URLRequest) async throws -> (Data, URLResponse) {
-        try await URLSession.shared.data(for: request)
+        var request = request
+        // 显式绕过 URLCache: 缓存 key 只有 URL 不含鉴权头, 同平台两个账号打
+        // 同一 api_base_url 时, A 账号的缓存响应可能被 B 账号读到 (跨账号串显)
+        if request.cachePolicy == .useProtocolCachePolicy {
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+        }
+        return try await URLSession.shared.data(for: request)
     }
 }
 

@@ -15,10 +15,13 @@ struct GLMLimitInfo: Codable {
 }
 
 struct GLMUsageResponse: Codable {
-    let code: Int
-    let msg: String
+    // 标量字段全部 optional: 上游漂移 (缺字段/类型变化) 时解码为 nil,
+    // 业务侧按"失败"处理并给出明确错误, 而不是整个响应解码失败
+    // 只剩一句费解的"解析错误" (成功字段缺失按失败论, 宁严勿松)
+    let code: Int?
+    let msg: String?
     let data: GLMUsageData?
-    let success: Bool
+    let success: Bool?
 }
 
 struct GLMUsageData: Codable {
@@ -88,8 +91,9 @@ final class GLMPlatformAPIService: PlatformAPIService {
 
         // 业务码错误 (key 失效 / 账户异常): success=false 时透出 msg,
         // 不要静默走空 metrics 让用户看到"无数据/红"却不知原因.
-        if !usageResponse.success {
-            let msg = usageResponse.msg.isEmpty ? "GLM request failed" : usageResponse.msg
+        // success 缺失/解析不出按失败论 (宁严勿松).
+        if usageResponse.success != true {
+            let msg = (usageResponse.msg?.isEmpty != false) ? "GLM request failed" : usageResponse.msg!
             throw PlatformError.apiError(config.platformType, msg)
         }
 
@@ -146,13 +150,20 @@ final class GLMPlatformAPIService: PlatformAPIService {
             throw PlatformError.apiError(config.platformType, I18nService.shared.translate("error.glm.emptyLimits"))
         }
 
+        // 同 label 去重: 上游多返回一条同 unit 的 TOKENS_LIMIT (或新增第二种
+        // TIME_LIMIT) 时会产生重复 label, 下游 visibleMetrics 虽已容忍,
+        // 这里在源头保留响应里的第一条, 保证状态判定与显示用同一份事实.
+        // (放在排序前: Swift 的 sort 不保证稳定, 排序后取"第一条"不可复现)
+        var seenLabels = Set<String>()
+        metrics = metrics.filter { seenLabels.insert($0.label).inserted }
+
         // 固定排序: 5 小时 → 周限额 → MCP 月度, 保证主要指标始终在前.
         let order: [String: Int] = ["five_hour": 0, "weekly_limit": 1, "mcp_monthly": 2]
         metrics.sort { (order[$0.label] ?? 99) < (order[$1.label] ?? 99) }
 
         // 5 小时和周限额有各自的剩余百分比, MCP 月度按次数判断.
         // 只要任一一项剩余 < 15% 视为状态异常. (unit=="%" 和次数型逻辑相同, 合并)
-        let isHealthy = usageResponse.success && !metrics.isEmpty && metrics.allSatisfy { metric in
+        let isHealthy = usageResponse.success == true && !metrics.isEmpty && metrics.allSatisfy { metric in
             guard let total = metric.totalValue, total > 0 else { return true }
             return metric.currentValue / total * 100 >= 15
         }

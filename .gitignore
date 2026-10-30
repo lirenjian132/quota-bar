@@ -32,3 +32,5 @@ windows/tools/preview/
 build/
 dist/
 *.spec
+# 打包规格要入库(可复现构建),不能被上面的通配吃掉
+!windows/QuotaBar.spec

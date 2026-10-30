@@ -54,26 +54,37 @@ def _acquire_single_instance_lock(app, key: Optional[str] = None) -> bool:
     return True
 
 
+def _error_log_path() -> str:
+    from quotabar.config import default_home
+
+    return os.path.join(default_home(), "error.log")
+
+
+def _append_error_log(text: str) -> None:
+    """把错误追加进 error.log(窗口化打包下 stderr 无人可见,这是唯一的现场)"""
+    try:
+        path = _error_log_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(text)
+            if not text.endswith("\n"):
+                f.write("\n")
+    except Exception:
+        pass
+
+
 def _install_crash_guard() -> None:
     """异常兜底:写日志而不是让 Qt 弹崩溃对话框。
 
     Qt 事件处理器里抛异常时,PyQt 会触发 abort(),Windows 弹出"程序已停止工作"
     对话框——对使用者是莫名其妙的错误弹窗。这里统一捕获并记到日志。
+    日志路径走 default_home():与配置同目录,QUOTABAR_HOME 重定向(测试/便携)
+    时日志跟着走,不会在真实 %APPDATA% 里留一份查不到的日志。
     """
     import traceback
 
-    log_path = os.path.join(
-        os.environ.get("APPDATA", os.path.expanduser("~")), "QuotaBar", "error.log"
-    )
-
     def handler(exc_type, exc_value, exc_tb):
-        try:
-            os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
-                f.write("\n")
-        except Exception:
-            pass
+        _append_error_log("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
 
     sys.excepthook = handler
 
@@ -100,18 +111,35 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)
 
     if not QSystemTrayIcon.isSystemTrayAvailable():
-        QMessageBox.critical(None, "QuotaBar", "此系统不支持系统托盘,无法运行。")
+        # i18n 资源此时尚未按用户配置初始化(配置还没读),用默认语言兜底
+        from quotabar.i18n import get_i18n
+
+        QMessageBox.critical(None, "QuotaBar", get_i18n().t("error.noTray"))
         return 1
     if not _acquire_single_instance_lock(app):
         return 0  # 已有实例在运行,静默退出
 
-    config = ConfigService()
-    manager = PlatformManager(config)
-    # 按持久化 locale 初始化 i18n 单例
-    get_i18n().set_locale(config.locale())
+    try:
+        # 构造阶段也要包在 catch 里:畸形配置(深层嵌套等)会让 ConfigService
+        # 构造抛异常,不兜住就是"双击无反应"(窗口化打包下用户看不到 traceback)
+        config = ConfigService()
+        manager = PlatformManager(config)
+        # 按持久化 locale 初始化 i18n 单例
+        get_i18n().set_locale(config.locale())
+        if config.read_failed() is not None:
+            # 配置读不出来:应用按默认值只读运行,保存会被拒绝(防覆盖真实数据)。
+            # 必须给可见提示,否则用户只会觉得"设置怎么都存不上"。
+            QMessageBox.warning(None, "QuotaBar", get_i18n().t("error.configUnreadable"))
 
-    tray = TrayApp(config, manager)
-    tray.start()
+        tray = TrayApp(config, manager)
+        tray.start()
+    except Exception as e:
+        # 启动期异常(畸形配置/系统 API 失败):给可见提示并记日志,不要静默闪退
+        import traceback
+
+        _append_error_log("".join(traceback.format_exception(type(e), e, e.__traceback__)))
+        QMessageBox.critical(None, "QuotaBar", get_i18n().t("error.startupFailed", str(e)))
+        return 1
 
     return app.exec_()
 

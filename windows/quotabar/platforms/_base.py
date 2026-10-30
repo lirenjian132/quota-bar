@@ -105,6 +105,20 @@ def to_float(value, default=None):
     return number
 
 
+def to_int(value, default=None):
+    """宽松转 int:整数、整值浮点、整数形式的数字字符串都接受;其它返回 default。
+
+    上游枚举字段(unit/status/status_code)偶尔会序列化成 "6"/"1" 这样的字符串,
+    直接 `== 6` 会把整条数据误判(周额度当 5 小时、有效账户报错)。统一归一化。
+    """
+    number = to_float(value)
+    if number is None:
+        return default
+    if not float(number).is_integer():
+        return default
+    return int(number)
+
+
 def parse_json(text: str) -> dict:
     """解析 JSON body;失败抛解析错误。
 
@@ -115,7 +129,9 @@ def parse_json(text: str) -> dict:
 
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, RecursionError) as e:
+        # RecursionError:超深嵌套的恶意/畸形 body,与解析失败同等处理,
+        # 不能冒到 manager 被兜成「网络错误」误导排查
         raise PlatformError(ErrorKind.DECODING, str(e)) from e
     if not isinstance(data, dict):
         raise PlatformError(ErrorKind.INVALID_RESPONSE)

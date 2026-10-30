@@ -29,7 +29,7 @@ from ..models import (
     UsageMetric,
 )
 from ..net import NetworkFunc, Request, Response
-from ._base import ServiceCache, parse_json, send, to_float
+from ._base import ServiceCache, parse_json, send, to_float, to_int
 
 CACHE_TTL = 300.0  # 秒;非公开接口,刻意放缓(与 macOS 版一致)
 OASIS_APPID = "10300"
@@ -70,10 +70,11 @@ class StepFunPlatformService:
     # ------------------------------------------------------------ 取数
 
     def fetch_usage(self, config: PlatformConfigData, network: NetworkFunc) -> PlatformUsageData:
+        # begin 在 read 之前:clear 落在两者之间时,旧凭据的在途结果不会以新代次写回
+        ver = self._cache.begin()
         cached = self._cache.read(CACHE_TTL)
         if cached is not None:
             return cached
-        ver = self._cache.begin()
 
         webid = self.extract_webid(config.api_key)
         if not webid:
@@ -113,9 +114,10 @@ class StepFunPlatformService:
         body = parse_json(
             self._post(config, network, headers, "QueryStepPlanRateLimit").text
         )
-        status = body.get("status")
+        # status 宽松整数归一化:上游序列化成 "1" 时不能误报业务错误
+        status = to_int(body.get("status"))
         if status != 1:
-            raise PlatformError(ErrorKind.API, body.get("desc") or f"status {status}")
+            raise PlatformError(ErrorKind.API, body.get("desc") or f"status {body.get('status')}")
 
         rate = body.get("plan_credit_rate_limit")
         if not isinstance(rate, dict):
@@ -168,10 +170,10 @@ class StepFunPlatformService:
             body = parse_json(
                 self._post(config, network, headers, "GetStepPlanStatus").text
             )
-            if body.get("status") != 1:
+            if to_int(body.get("status")) != 1:
                 return False
             sub = body.get("subscription") or {}
-            status_val = sub.get("status")
+            status_val = to_int(sub.get("status"))
             # status 缺失不算失效(与 Swift 版 sub.status != nil 判断一致)
             if status_val is not None and status_val != 1:
                 return True  # 先信 status 字段,不信时间戳(停订时 expired_at 常仍在未来)

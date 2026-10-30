@@ -59,7 +59,8 @@ def _decode_jwt_payload(jwt: str) -> Optional[dict]:
     raw += "=" * (-len(raw) % 4)
     try:
         data = json.loads(base64.b64decode(raw))
-    except (ValueError, TypeError, json.JSONDecodeError):
+    except (ValueError, TypeError, json.JSONDecodeError, RecursionError):
+        # RecursionError:畸形超深嵌套 payload,与解析失败同等处理
         return None
     return data if isinstance(data, dict) else None
 
@@ -76,7 +77,12 @@ def _expiry_from_payload(payload: dict) -> Optional[float]:
             return None
     if not isinstance(value, (int, float)):
         return None
-    value = float(value)
+    try:
+        value = float(value)
+    except OverflowError:
+        # 超大整数(畸形/伪造 token 里的 exp)转 float 会溢出:在解析层返回 None,
+        # 而不是把 OverflowError 冒到取数层被包装成误导性的"网络错误"
+        return None
     return value if math.isfinite(value) else None
 
 
@@ -152,7 +158,8 @@ def refresh_credential(
         return None
     try:
         body = json.loads(resp.text)
-    except (ValueError, TypeError, json.JSONDecodeError):
+    except (ValueError, TypeError, json.JSONDecodeError, RecursionError):
+        # RecursionError:响应体超深嵌套(恶意/畸形),按刷新失败处理
         return None
     if not isinstance(body, dict):
         return None

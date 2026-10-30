@@ -26,7 +26,7 @@ from ..models import (
     UsageMetric,
 )
 from ..net import NetworkFunc, Request
-from ._base import ServiceCache, parse_json, send, to_float
+from ._base import ServiceCache, parse_json, send, to_float, to_int
 
 CACHE_TTL = 10.0  # 秒;与 macOS 版一致
 
@@ -41,10 +41,11 @@ class GLMPlatformService:
         self._cache.clear()
 
     def fetch_usage(self, config: PlatformConfigData, network: NetworkFunc) -> PlatformUsageData:
+        # begin 在 read 之前:clear 落在两者之间时,旧凭据的在途结果不会以新代次写回
+        ver = self._cache.begin()
         cached = self._cache.read(CACHE_TTL)
         if cached is not None:
             return cached
-        ver = self._cache.begin()
 
         resp = send(
             network,
@@ -92,7 +93,8 @@ class GLMPlatformService:
                 if used_pct is None:
                     continue  # 缺失/类型异常的条目整条跳过
                 remaining = max(0.0, 100 - used_pct)
-                label = LABEL_WEEKLY_LIMIT if item.get("unit") == 6 else LABEL_FIVE_HOUR
+                # unit 用宽松整数归一化:上游把 6 序列化成 "6" 时不能把周额度误判成 5 小时
+                label = LABEL_WEEKLY_LIMIT if to_int(item.get("unit")) == 6 else LABEL_FIVE_HOUR
                 metrics.append(
                     UsageMetric(
                         label=label,
@@ -119,10 +121,19 @@ class GLMPlatformService:
         if not metrics:
             # message 用 i18n key,UI 层 t() 后回退原样显示
             raise PlatformError(ErrorKind.API, "error.glm.emptyLimits")
+        # 同 label 去重(保留响应首条,与 Swift 侧一致):上游多返回一条同 unit 的
+        # TOKENS_LIMIT 时,详情窗会出现两张互相矛盾的「周限额」卡片
+        seen_labels: set[str] = set()
+        deduped: list[UsageMetric] = []
+        for metric in metrics:
+            if metric.label in seen_labels:
+                continue
+            seen_labels.add(metric.label)
+            deduped.append(metric)
         # 固定排序:5 小时 → 周 → MCP 月度
         order = {LABEL_FIVE_HOUR: 0, LABEL_WEEKLY_LIMIT: 1, LABEL_MCP_MONTHLY: 2}
-        metrics.sort(key=lambda m: order[m.label])
-        return metrics
+        deduped.sort(key=lambda m: order[m.label])
+        return deduped
 
 
 def _remaining_ratio(metric) -> float:
@@ -135,8 +146,15 @@ def _remaining_ratio(metric) -> float:
 
 
 def _ms_to_seconds(ts) -> float | None:
-    """毫秒时间戳转 Unix 秒;缺失、非数字或非正数返回 None(对齐 Swift 的 ms > 0 判定)"""
+    """毫秒时间戳转 Unix 秒;缺失、非数字或非正数返回 None(对齐 Swift 的 ms > 0 判定)。
+
+    另加合理性区间(2020~2096):上游把秒当毫秒/把纳秒当毫秒时会算出 1970 年
+    或几百年后的假日期,把倒计时画成几百位数字。
+    """
     value = to_float(ts)
     if value is None or value <= 0:
         return None
-    return value / 1000.0
+    seconds = value / 1000.0
+    if not (1_577_836_800 <= seconds <= 4_000_000_000):
+        return None
+    return seconds

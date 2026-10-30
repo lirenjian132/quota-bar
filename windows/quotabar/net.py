@@ -35,12 +35,18 @@ NetworkFunc = Callable[[Request], Response]
 
 
 def requests_network(req: Request) -> Response:
-    """默认实现:走 requests 库"""
+    """默认实现:走 requests 库。
+
+    不跟随重定向:requests 跨域重定向只剥离 Authorization,手工设置的
+    Cookie 头会原样发给重定向目标主机——Stepfun/基元律动的整串会话 cookie
+    走的正是这条路径。这些 API 都是 JSON 接口,跟随重定向本无意义,直接禁掉。
+    """
     resp = requests.request(
         req.method,
         req.url,
         headers=req.headers,
         timeout=req.timeout,
         data=req.body.encode("utf-8") if req.body is not None else None,
+        allow_redirects=False,
     )
     return Response(status_code=resp.status_code, text=resp.text)

@@ -23,10 +23,25 @@ final class PlatformInstanceStore {
     init(userDefaults: UserDefaults = AppEnvironment.defaults, keychain: KeychainStoring = AppEnvironment.makeKeychain()) {
         self.defaults = userDefaults
         self.keychain = keychain
-        if let data = defaults.data(forKey: defaultsKey),
-           let list = try? JSONDecoder().decode([PlatformInstance].self, from: data),
-           !list.isEmpty {
-            _instances = list
+        if let data = defaults.data(forKey: defaultsKey) {
+            // 有数据但解不出来 ≠ 没有数据: 解码失败时不能静默跑迁移并把坏状态当正常.
+            // 处理: 先试上次留下的 .bak(可能是好的, 用备份修复主键); 都不行才
+            // 备份当前坏数据并迁移兜底.
+            if let list = try? JSONDecoder().decode([PlatformInstance].self, from: data) {
+                // 解码成功: 空列表是合法状态(账号被删光), 不能再跑迁移整批复活
+                _instances = list
+            } else if let bakData = defaults.data(forKey: defaultsKey + ".bak"),
+                      let bakList = try? JSONDecoder().decode([PlatformInstance].self, from: bakData),
+                      !bakList.isEmpty {
+                _instances = bakList
+                persistLocked()  // 用备份把坏掉的主键修正回来
+            } else {
+                // 备份坏数据再迁移: 下次启动还能从 .bak 里人工找回原始实例列表
+                // (单槽备份:二次损坏会覆盖首次备份, 属可接受的取舍)
+                defaults.set(data, forKey: defaultsKey + ".bak")
+                _instances = Self.migrateLegacyPerTypeConfig(into: userDefaults)
+                persistLocked()
+            }
         } else {
             _instances = Self.migrateLegacyPerTypeConfig(into: userDefaults)
             persistLocked()

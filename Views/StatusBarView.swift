@@ -7,14 +7,23 @@ enum StatusBarViewHelper {
     ///   isHealthy=false → red (与弹窗口径一致);
     ///   健康时才按第一个 metric 的百分比/到期阈值走红黄绿.
     /// GLM 空 limits (isHealthy=false) 时空 metrics 必须先兜底, 否则状态栏红而弹窗灰.
-    static func statusColor(for data: PlatformUsageData?) -> Color {
+    static func statusColor(for data: PlatformUsageData?, metrics: [UsageMetric]? = nil) -> Color {
         guard let data else { return .secondary }
         if data.metrics.isEmpty { return .secondary }
         // 失效判定对所有平台优先: Stepfun 订阅停用时 credits 余量仍有 96%,
         // 旧逻辑在"百分比还够看"的分支里直接返回绿色, 与弹窗口径矛盾.
         // 这里统一为 isHealthy=false → 红 (与各 service 的 isHealthy 语义一致).
         guard data.isHealthy else { return .red }
-        if let metric = data.metrics.first, metric.unit != "unlimited" {
+        // 状态点跟用户实际勾选展示的指标走: 只勾了 mcp_monthly 时,
+        // 圆点要按 MCP 的余量变红变黄, 不能按未展示的 five_hour 装绿.
+        // 传入空列表时回退原始首项 (显示侧有 prefix(2) 防呆兜底).
+        let candidates: [UsageMetric]
+        if let metrics, !metrics.isEmpty {
+            candidates = metrics
+        } else {
+            candidates = data.metrics
+        }
+        if let metric = candidates.first, metric.unit != "unlimited" {
             if let total = metric.totalValue, total > 0 {
                 let remainingRatio = metric.currentValue / total
                 if remainingRatio < 0.1 { return .red }
@@ -41,7 +50,10 @@ enum StatusBarViewHelper {
     /// 回退显示前 2 个 metric, 不让状态栏恒显 "--" 逼用户去翻菜单; 有交集时行为不变.
     static func visibleMetrics(from metrics: [UsageMetric], enabledLabels: [String]?) -> [UsageMetric] {
         guard let enabledLabels else { return metrics }
-        let byLabel = Dictionary(uniqueKeysWithValues: metrics.map { ($0.label, $0) })
+        // 不能用 Dictionary(uniqueKeysWithValues:): 上游返回两条同 label 的 metric
+        // (如 GLM 两条同 unit 的 TOKENS_LIMIT) 会触发 precondition failure 直接闪退,
+        // 这正是 "假设上游永远乖巧" 的崩溃点 —— 重复时保留第一条.
+        let byLabel = Dictionary(metrics.map { ($0.label, $0) }, uniquingKeysWith: { first, _ in first })
         // 同族展开 + 去重 (保序): 勾族名 weekly_limit 能匹配 boosted/unlimited 产出;
         // 勾族内某个具体 label 时同样整族展开 (套餐切换后仍显示周额度, 不回退).
         var expanded: [String] = []
@@ -127,7 +139,7 @@ struct StatusBarView: View {
     }
 
     private var statusColor: Color {
-        StatusBarViewHelper.statusColor(for: platformData)
+        StatusBarViewHelper.statusColor(for: platformData, metrics: visibleMetrics)
     }
 
     var body: some View {

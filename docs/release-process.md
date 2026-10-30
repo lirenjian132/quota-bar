@@ -35,8 +35,8 @@ git checkout -b chore/bump-version-X.Y.Z
 # 更新版本号 (XcodeGen 工程, 源头是 project.yml)
 # MARKETING_VERSION: X.Y.Z (显示版本)
 # CURRENT_PROJECT_VERSION: N (构建版本，每次 +1)
-# 流程: 改 project.yml → xcodegen generate → 同步 scripts/package-dmg.sh 的 MARKETING_VERSION
-# (package-dmg.sh 里是硬编码副本, 漏同步会打出旧版本号的 DMG 文件名)
+# 流程: 改 project.yml → xcodegen generate
+# (package-dmg.sh 直接从 project.yml 读 MARKETING_VERSION, 无需再同步副本)
 
 # 提交并推送
 git add -A

@@ -28,7 +28,7 @@ from ..models import (
     UsageMetric,
 )
 from ..net import NetworkFunc, Request
-from ._base import ServiceCache, parse_json, send, to_float
+from ._base import ServiceCache, parse_json, send, to_float, to_int
 
 CACHE_TTL = 10.0  # 秒;与 macOS 版一致
 
@@ -43,10 +43,12 @@ class MiniMaxPlatformService:
         self._cache.clear()
 
     def fetch_usage(self, config: PlatformConfigData, network: NetworkFunc) -> PlatformUsageData:
+        # begin 必须在 read 之前:否则 read 未命中后、begin 之前发生 clear(换 key),
+        # 旧 key 的在途结果会以新代次写进缓存,污染 5 分钟
+        ver = self._cache.begin()
         cached = self._cache.read(CACHE_TTL)
         if cached is not None:
             return cached
-        ver = self._cache.begin()
 
         resp = send(
             network,
@@ -81,8 +83,10 @@ class MiniMaxPlatformService:
         if base_resp is not None:
             if not isinstance(base_resp, dict):
                 raise PlatformError(ErrorKind.INVALID_RESPONSE)
-            if base_resp.get("status_code") not in (None, 0):
-                msg = base_resp.get("status_msg") or f"status_code {base_resp.get('status_code')}"
+            # status_code 宽松整数归一化:上游序列化成 "0" 时不能误报业务错误
+            status_code = to_int(base_resp.get("status_code"))
+            if status_code not in (None, 0):
+                msg = base_resp.get("status_msg") or f"status_code {status_code}"
                 raise PlatformError(ErrorKind.API, str(msg))
         remains = body.get("model_remains")
         if not isinstance(remains, list) or not remains:
@@ -119,7 +123,8 @@ class MiniMaxPlatformService:
 
     @staticmethod
     def _weekly_metric(item: dict, now: float) -> UsageMetric:
-        if item.get("current_weekly_status") == 1:
+        # 宽松整数归一化:字符串 "1" 不能被当成无限态
+        if to_int(item.get("current_weekly_status")) == 1:
             boost_permille = to_float(item.get("weekly_boost_permille")) or 0.0
             label = (
                 LABEL_WEEKLY_BOOSTED
@@ -151,10 +156,13 @@ class MiniMaxPlatformService:
 
 
 def _reset_time(absolute_ms, relative_ms, now: float) -> float | None:
-    """重置时刻:优先毫秒绝对时间戳(>0 才算数);缺失/非正退化 now + 相对毫秒"""
+    """重置时刻:优先毫秒绝对时间戳(>0 且落在合理区间才算数);缺失/非正退化 now + 相对毫秒"""
     absolute = to_float(absolute_ms)
     if absolute is not None and absolute > 0:
-        return absolute / 1000.0
+        seconds = absolute / 1000.0
+        # 合理性区间(2020~2096):挡住秒当毫秒/纳秒当毫秒算出的假日期
+        if 1_577_836_800 <= seconds <= 4_000_000_000:
+            return seconds
     relative = to_float(relative_ms)
     if relative is not None and relative > 0:
         return now + relative / 1000.0

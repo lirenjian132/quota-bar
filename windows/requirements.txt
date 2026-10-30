@@ -1,5 +1,4 @@
+# 直接依赖钉死(传递依赖由 pip 解析,未锁定)
 PyQt5==5.15.11
-requests>=2.31
-pytest>=8.0
-websocket-client>=1.6
-
+requests==2.34.2
+websocket-client==1.9.2

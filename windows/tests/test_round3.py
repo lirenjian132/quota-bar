@@ -43,8 +43,8 @@ def test_locale_valid_values_are_kept(tmp_path):
 
 # ------------------------------------------------------------ 删账号的两阶段回滚
 
-def test_delete_instance_rollback_not_overwritten_by_second_failure(monkeypatch, tmp_path):
-    """凭据写失败、恢复写也失败时:内存里账号要保住,不能被快照覆盖回删除态"""
+def test_delete_instance_survives_settings_write_failure(monkeypatch, tmp_path):
+    """第一步落盘(settings)就失败:删除中止,账号与凭据原封不动"""
     config = ConfigService(home=str(tmp_path / "home"))
     inst = config.add_instance(PlatformType.MINIMAX_CN)
     config.set_api_key(inst.id, "sk-secret")
@@ -58,31 +58,69 @@ def test_delete_instance_rollback_not_overwritten_by_second_failure(monkeypatch,
 
     # 账号必须还在(回滚语义:要么都成、要么都不成)
     assert config.instance(inst.id) is not None
+    assert config.api_key(inst.id) == "sk-secret"
 
 
-def test_delete_instance_rollback_survives_partial_failure(monkeypatch, tmp_path):
-    """settings 写成功、keys 写失败、恢复写也失败:账号仍在,凭据仍在"""
+def test_delete_instance_rollback_restores_account_when_recovery_succeeds(monkeypatch, tmp_path):
+    """settings 写成功、keys 写失败、恢复写成功:账号与凭据完整回到删除前"""
+    import os
+
     config = ConfigService(home=str(tmp_path / "home"))
     inst = config.add_instance(PlatformType.MINIMAX_CN)
     config.set_api_key(inst.id, "sk-secret")
 
     real_write = config._atomic_write
+    calls: list[str] = []
 
-    def fail_keys_and_recovery(path, data):
-        if path.endswith("keys.json"):
+    def scripted(path, data):
+        calls.append(os.path.basename(path))
+        if len(calls) == 2:  # 第 2 次写 = keys.json(删除凭据):失败
             raise OSError("disk full")
-        # 恢复那次写也要失败
-        if not hasattr(fail_keys_and_recovery, "counted"):
-            fail_keys_and_recovery.counted = True
-            raise OSError("disk full")
-        return real_write(path, data)
+        return real_write(path, data)  # 恢复那次写放行
 
-    monkeypatch.setattr(config, "_atomic_write", fail_keys_and_recovery)
+    monkeypatch.setattr(config, "_atomic_write", scripted)
     with pytest.raises(OSError):
         config.delete_instance(inst.id)
 
+    # 精确走到目标分支:settings(删) → keys(败) → settings(恢复)
+    assert calls == ["settings.json", "keys.json", "settings.json"]
     assert config.instance(inst.id) is not None
     assert config.api_key(inst.id) == "sk-secret"
+    # 磁盘上也完整恢复(重开一个实例从盘上读)
+    reloaded = ConfigService(home=str(tmp_path / "home"))
+    assert reloaded.instance(inst.id) is not None
+    assert reloaded.api_key(inst.id) == "sk-secret"
+
+
+def test_delete_instance_rollback_survives_partial_failure(monkeypatch, tmp_path):
+    """settings 写成功、keys 写失败、恢复写也失败:磁盘删除已生效,内存跟随磁盘"""
+    import os
+
+    config = ConfigService(home=str(tmp_path / "home"))
+    inst = config.add_instance(PlatformType.MINIMAX_CN)
+    config.set_api_key(inst.id, "sk-secret")
+
+    real_write = config._atomic_write
+    calls: list[str] = []
+
+    def scripted(path, data):
+        calls.append(os.path.basename(path))
+        if len(calls) in (2, 3):  # keys 写失败 + 恢复 settings 也失败
+            raise OSError("disk full")
+        return real_write(path, data)
+
+    monkeypatch.setattr(config, "_atomic_write", scripted)
+    with pytest.raises(OSError):
+        config.delete_instance(inst.id)
+
+    # 以前的写法对第一次非 keys 写入就抛错,根本没进 keys 阶段——这里钉死写序
+    assert calls == ["settings.json", "keys.json", "settings.json"]
+    # 第三级降级的语义是「内存跟磁盘走」:磁盘上删除已生效、恢复又写不进去,
+    # 内存也保持删除态(否则重启后账号凭空消失,内存与磁盘分叉)
+    assert config.instance(inst.id) is None
+    # 凭据从内存清掉(磁盘 keys.json 还留着,等下次落盘清理)——
+    # 旧断言「凭据仍在」描述的是从未执行到的分支
+    assert config.api_key(inst.id) == ""
 
 
 # ------------------------------------------------------------ 入口开关的原子性

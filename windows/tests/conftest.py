@@ -34,6 +34,17 @@ def json_response(payload: dict, status_code: int = 200) -> Response:
     return Response(status_code=status_code, text=json.dumps(payload))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_quota_bar_home(tmp_path, monkeypatch):
+    """全局兜底隔离:把 QUOTABAR_HOME 指到临时目录。
+
+    ConfigService() 不传 home 时会读 QUOTABAR_HOME/APPDATA——哪个测试忘了
+    显式传 home,就会读写真实 %APPDATA%\\QuotaBar(把用户自己的账号配置改掉)。
+    这个 autouse 夹具保证任何路径下跑测试都碰不到真实数据目录。
+    """
+    monkeypatch.setenv("QUOTABAR_HOME", str(tmp_path / "quota-bar-home"))
+
+
 @pytest.fixture
 def config(tmp_path):
     """隔离数据目录的 ConfigService"""

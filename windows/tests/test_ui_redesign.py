@@ -106,7 +106,10 @@ def test_open_detail_for_switches_account(qapp, tray, monkeypatch):
     """点面板账号块:详情窗选中该账号,并把它设为激活账号"""
     one = tray.config.add_instance(PlatformType.MINIMAX_CN, "账号一")
     two = tray.config.add_instance(PlatformType.MINIMAX_CN, "账号二")
+    # 两个取数入口都要挡掉:只挡 fetch_all 的话,open_detail_for 里没数据的
+    # 账号会走 fetch_instance_async,拿假 key 打真实生产接口
     monkeypatch.setattr(tray, "fetch_all_async", lambda: None)
+    monkeypatch.setattr(tray, "fetch_instance_async", lambda iid: None)
 
     tray.open_detail_for(two.id)
 

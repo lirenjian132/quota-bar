@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import shutil
 import sys
 import threading
+import time
 from typing import Optional
 
 from .models import (
@@ -39,6 +41,15 @@ class ConfigRuleError(ValueError):
     与「写盘失败」必须区分开:规则拒绝是正常反馈(比如勾了 3 个指标、禁用最后
     一个账号),UI 要给对应的提示;落盘失败才提示「保存失败」。
     它继承 ValueError,现有的 `except ValueError` 分支照旧能接住。
+    """
+
+
+class ConfigReadError(OSError):
+    """配置文件存在但读不出来(被占用/权限不足)。
+
+    继承 OSError:UI 的保存失败提示路径只需捕获 OSError 即可覆盖它。
+    这类错误**绝不能**被当成「首次运行」——按默认值继续跑再允许保存,
+    下一次写盘就会把磁盘上的真实账号与凭据整体覆盖掉。
     """
 
 
@@ -71,7 +82,15 @@ def _sanitize_per_instance(st: dict) -> dict:
         out[key] = bool(st.get(key, False))
     metrics = st.get("enabled_metrics")
     if isinstance(metrics, (list, tuple)):
-        out["enabled_metrics"] = [_sanitize_text(m) for m in metrics if isinstance(m, str)]
+        # 去重保序:重复 label 会让指标菜单"勾 2 个只显示 1 个",且勾掉唯一
+        # 可见项后提交空列表被拒 → 该项再也改不了(只能删号重建)
+        cleaned_metrics: list[str] = []
+        for m in metrics:
+            if isinstance(m, str):
+                item = _sanitize_text(m)
+                if item and item not in cleaned_metrics:
+                    cleaned_metrics.append(item)
+        out["enabled_metrics"] = cleaned_metrics
     else:
         out["enabled_metrics"] = []
     for key in ("api_base_url", "api_base_url_international", "auth_header", "auth_prefix", "region"):
@@ -134,12 +153,26 @@ class ConfigService:
         self._settings_path = os.path.join(self._home, SETTINGS_FILE)
         self._keys_path = os.path.join(self._home, KEYS_FILE)
         self._lock = threading.RLock()
-        self._settings = self._load_settings()
-        self._keys: dict[str, str] = self._load_keys()
+        self._read_failed: Optional[ConfigReadError] = None
+        try:
+            self._settings = self._load_settings()
+            self._keys: dict[str, str] = self._load_keys()
+        except ConfigReadError as e:
+            # 读不出来:内存先按空配置跑(界面能起来),但**所有保存被拒绝**——
+            # 绝不能用"从未成功读到的默认值"覆盖磁盘上的真实数据。原文件原地
+            # 不动,占用解除后重启即可自愈(旧方案把文件改名隔离,重启仍是空配置,
+            # 下次保存就把默认值固化到磁盘,用户只能手工找回)。
+            self._read_failed = e
+            self._settings = self._default_settings()
+            self._keys = {}
         self._normalize()
         # 上一次落盘成功的快照:写盘失败时回滚到它,保证「内存 = 磁盘」不被拆开
         self._settings_snapshot = copy.deepcopy(self._settings)
         self._keys_snapshot = dict(self._keys)
+
+    def read_failed(self) -> Optional[ConfigReadError]:
+        """启动时配置文件读不出来则返回该错误;调用方应给用户可见提示"""
+        return self._read_failed
 
     def _normalize(self) -> None:
         """兼容旧数据 + 结构自愈(__init__ 与 reload 共用)。
@@ -153,17 +186,27 @@ class ConfigService:
         if not isinstance(self._settings, dict):
             self._settings = self._default_settings()
             return
+        dropped = False
+        # 根键白名单:未知根键(可能是手改/恶意配置里的深层嵌套值)必须丢弃。
+        # 只清洗 globals 是不够的——根层的 junk 值一样能让后面的 deepcopy 抛
+        # RecursionError,应用启动即崩。
+        known_root_keys = ("instances", "tombstones", "globals", "per_instance")
+        if set(self._settings) - set(known_root_keys):
+            dropped = True
+        self._settings = {key: self._settings.get(key) for key in known_root_keys}
         if not isinstance(self._settings.get("instances"), list):
             self._settings["instances"] = []
         if not isinstance(self._settings.get("tombstones"), list):
             self._settings["tombstones"] = []
         if not isinstance(self._settings.get("globals"), dict):
             self._settings["globals"] = {}
+        if self._normalize_globals():
+            dropped = True
         if not isinstance(self._settings.get("per_instance"), dict):
             self._settings["per_instance"] = {}
         # 账号条目逐个校验:坏的剔除、好的保留(不让一个坏条目带走全部账号)
         valid: list[dict] = []
-        dropped = False
+        seen_ids: set[str] = set()
         for it in self._settings["instances"]:
             if not isinstance(it, dict):
                 dropped = True
@@ -178,6 +221,10 @@ class ConfigService:
             except ValueError:
                 dropped = True
                 continue  # 未知平台(版本回退/手改):剔除,别拖垮启动
+            if iid in seen_ids:
+                dropped = True
+                continue  # 重复 id(手改坏了):保留第一条,重复条目会共用同一份配置
+            seen_ids.add(iid)
             name = _sanitize_text(it.get("display_name"))
             valid.append(
                 {
@@ -214,6 +261,54 @@ class ConfigService:
             # 剔掉了东西就留个备份(原文件挪走,后续保存会写一份干净的)
             self._backup_corrupt(self._settings_path)
 
+    def _normalize_globals(self) -> bool:
+        """globals 白名单化:只保留已知键并校正类型,未知/深层嵌套垃圾直接丢弃。
+
+        手改或恶意配置里的深层嵌套值(如 500 层 list)能通过 json.loads,
+        但随后的 copy.deepcopy 会抛 RecursionError —— 白名单是根因修复
+        (异常兜底只能挡住一处,挡不住下一次 deepcopy)。返回是否有改动。
+        """
+        raw = self._settings.get("globals")
+        if not isinstance(raw, dict):
+            self._settings["globals"] = {}
+            return True
+        clean: dict = {}
+        if isinstance(raw.get("display_mode"), str):
+            clean["display_mode"] = raw["display_mode"]
+        # refresh_interval 的合法值是枚举字符串(如 "fiveMinutes")或旧版整数;
+        # 嵌套对象/列表一律丢弃(深层垃圾会让后续 deepcopy 抛 RecursionError)
+        refresh = raw.get("refresh_interval")
+        if isinstance(refresh, (int, str)) and not isinstance(refresh, bool):
+            clean["refresh_interval"] = refresh
+        if isinstance(raw.get("locale"), str):
+            clean["locale"] = raw["locale"]
+        active = raw.get("active_instance_id")
+        if active is None or isinstance(active, str):
+            clean["active_instance_id"] = active
+        pos = raw.get("overlay_pos")
+        if (
+            isinstance(pos, (list, tuple))
+            and len(pos) == 2
+            and all(
+                isinstance(v, (int, float))
+                and not isinstance(v, bool)
+                and math.isfinite(float(v))
+                for v in pos
+            )
+        ):
+            clean["overlay_pos"] = [int(pos[0]), int(pos[1])]
+        for key in ("overlay_embedded", "overlay_enabled", "tray_icon_enabled", "show_percent"):
+            if key in raw:
+                clean[key] = bool(raw[key])
+        anchor = raw.get("overlay_anchor")
+        if isinstance(anchor, str):
+            clean["overlay_anchor"] = anchor
+        # 只有"丢掉了原有键"才算数据改动(需要留备份);给缺失键补默认值不算丢数据,
+        # 否则每次加载旧配置都会多一份 .corrupt
+        changed = bool(set(raw) - set(clean))
+        self._settings["globals"] = clean
+        return changed
+
     def _default_per_instance(self, platform: PlatformType) -> dict:
         """某平台的默认每实例配置(模板填充 + 默认勾选指标)"""
         tpl = self._load_template(platform)
@@ -232,7 +327,7 @@ class ConfigService:
 
     def _load_settings(self) -> dict:
         """读 settings.json;根不是 dict 视为损坏(备份后回落默认)"""
-        data = self._load_json(self._settings_path)
+        data = self._load_json(self._settings_path, protect=True)
         if data is None:
             return self._default_settings()
         if not isinstance(data, dict):
@@ -242,7 +337,7 @@ class ConfigService:
 
     def _load_keys(self) -> dict:
         """读 keys.json;根不是 dict 视为损坏(备份后回落空)"""
-        data = self._load_json(self._keys_path)
+        data = self._load_json(self._keys_path, protect=True)
         if data is None:
             return {}
         if not isinstance(data, dict):
@@ -271,23 +366,38 @@ class ConfigService:
             pass
 
     @staticmethod
-    def _load_json(path: str):
+    def _load_json(path: str, protect: bool = False):
         """读 JSON;文件不存在返回 None;内容损坏先备份 .corrupt 再返回 None。
 
         损坏时若直接静默回落默认值,后续任何一次保存都会把残缺状态覆盖回磁盘,
         原配置永久丢失——所以必须先留备份。
+
+        读不出来(OSError)与「文件不存在」严格区分:同步客户端占位/杀软扫描/
+        权限抖动造成的读失败不能当「首次运行」处理。先重试(瞬时锁一般几十
+        毫秒内释放);仍失败且 protect=True 时抛 ConfigReadError,由 ConfigService
+        拒绝一切保存并把原文件留在原地——用户关掉占用程序后重启即可自愈。
         """
-        try:
-            # utf-8-sig:带 BOM 的文件(记事本/部分同步客户端产物)也能读
-            with open(path, encoding="utf-8-sig") as f:
-                return json.load(f)
-        except OSError:
-            return None
-        except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
-            # UnicodeDecodeError:文件被非 UTF-8 的工具/同步客户端转过码,
-            # 与 JSON 损坏同等处理(备份 + 回落默认),不能直接崩在启动阶段
+        last_err: Optional[OSError] = None
+        for _ in range(5):
+            try:
+                # utf-8-sig:带 BOM 的文件(记事本/部分同步客户端产物)也能读
+                with open(path, encoding="utf-8-sig") as f:
+                    return json.load(f)
+            except FileNotFoundError:
+                return None
+            except OSError as e:
+                last_err = e  # 瞬时锁:退避后重试(总等待约 0.75s)
+                time.sleep(0.05 * (1 + _))
+            except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
+                # UnicodeDecodeError:文件被非 UTF-8 的工具/同步客户端转过码,
+                # 与 JSON 损坏同等处理(备份 + 回落默认),不能直接崩在启动阶段
+                ConfigService._backup_corrupt(path)
+                return None
+        if protect:
+            # 尽力留一份证据(读都读不了时复制多半也失败,失败就算了)
             ConfigService._backup_corrupt(path)
-            return None
+            raise ConfigReadError(f"配置文件读取失败: {path} ({last_err})")
+        return None
 
     @staticmethod
     def _atomic_write(path: str, data) -> None:
@@ -311,6 +421,9 @@ class ConfigService:
 
     def _save_settings(self) -> None:
         try:
+            # 必须在 try 内:读失败禁写抛错时要走下面同一套快照回滚,
+            # 否则"拒绝保存"了但内存已被调用方改掉(幽灵账号/凭据会参与取数)
+            self._ensure_writable()
             self._atomic_write(self._settings_path, self._settings)
         except Exception:
             # 回滚到上次落盘成功的状态:内存新/磁盘旧会让界面显示"已保存",
@@ -321,11 +434,18 @@ class ConfigService:
 
     def _save_keys(self) -> None:
         try:
+            # 同 _save_settings:禁写异常也要走快照回滚
+            self._ensure_writable()
             self._atomic_write(self._keys_path, self._keys)
         except Exception:
             self._keys = dict(self._keys_snapshot)
             raise
         self._keys_snapshot = dict(self._keys)
+
+    def _ensure_writable(self) -> None:
+        """启动读失败期间拒绝一切保存:内存是默认值,写下去就是数据丢失"""
+        if self._read_failed is not None:
+            raise ConfigReadError(str(self._read_failed))
 
     @staticmethod
     def _default_settings() -> dict:
@@ -342,10 +462,17 @@ class ConfigService:
         }
 
     def reload(self) -> None:
-        """重新从磁盘加载(测试用)"""
+        """重新从磁盘加载(测试用);成功即解除"读失败"的保存封锁"""
         with self._lock:
-            self._settings = self._load_settings()
-            self._keys = self._load_keys()
+            try:
+                settings = self._load_settings()
+                keys = self._load_keys()
+            except ConfigReadError as e:
+                self._read_failed = e
+                return
+            self._read_failed = None
+            self._settings = settings
+            self._keys = keys
             self._normalize()
             self._settings_snapshot = copy.deepcopy(self._settings)
             self._keys_snapshot = dict(self._keys)
@@ -384,11 +511,16 @@ class ConfigService:
         return None
 
     def _next_id(self, platform: PlatformType) -> str:
-        """生成不与现存实例及墓碑冲突的 id(已删 id 永不复用,防凭据撞 key)"""
+        """生成不与现存实例、墓碑及**残留凭据**冲突的 id(已删 id 永不复用,防凭据撞 key)。
+
+        keys.json 里可能留有孤儿凭据(settings 丢失/删除半途崩溃):id 一旦与
+        孤儿 key 撞上,新账号会静默继承旧账号的凭据并以旧账号身份取数。
+        """
         used = set()
         for it in self._settings["instances"]:
             used.add(it["id"])
         used.update(self._settings["tombstones"])
+        used.update(self._keys.keys())
         prefix = platform.value + "-"
         n = 1
         while f"{prefix}{n}" in used:
@@ -404,13 +536,18 @@ class ConfigService:
         return platform.value
 
     def _load_template(self, platform: PlatformType) -> dict:
-        """读平台模板;文件缺失/读不出来时用内置兜底值(打包漏带 Resources 的保险)"""
+        """读平台模板;缺失字段用内置兜底补齐(打包漏带 Resources 的保险)。
+
+        只把模板当整体兜底是不够的:模板是**部分字典**(缺 api_base_url)时,
+        账号会永远停在「未配置」。以内置默认值为底、模板值覆盖,缺字段自动补。
+        """
         name = self._template_name(platform)
         path = os.path.join(_resources_dir(), "ConfigTemplates", f"{name}.template.json")
         data = self._load_json(path)
-        if isinstance(data, dict) and data:
-            return data
-        return dict(_TEMPLATE_FALLBACK.get(name, {}))
+        merged = dict(_TEMPLATE_FALLBACK.get(name, {}))
+        if isinstance(data, dict):
+            merged.update(data)
+        return merged
 
     def add_instance(self, platform: PlatformType, display_name: Optional[str] = None) -> PlatformInstance:
         """添加账号实例:自动启用、按模板填充取数配置、默认勾选指标"""
@@ -418,7 +555,9 @@ class ConfigService:
             inst = PlatformInstance(
                 id=self._next_id(platform),
                 platform_type=platform,
-                display_name=(display_name or "").strip() or platform.display_name(),
+                # 与 rename/_normalize 同一消毒口径:名字来自用户输入(剪贴板粘贴),
+                # 带代理字符会让之后每一次落盘都失败,带换行会在 tooltip 里伪造多行
+                display_name=_sanitize_text((display_name or "").strip()) or platform.display_name(),
             )
             self._settings["instances"].append(
                 {"id": inst.id, "platform_type": platform.value, "display_name": inst.display_name}
@@ -476,8 +615,11 @@ class ConfigService:
                     # 否则内存与磁盘分叉,重启后账号凭空消失。
                     self._settings = deleted
                     self._settings_snapshot = copy.deepcopy(deleted)
-                    # 账号真没了,凭据也别留在内存里:下次任意一次 keys 落盘会清掉它
+                    # 账号真没了,凭据也别留在内存里:下次任意一次 keys 落盘会清掉它。
+                    # 快照同样要摘:否则后续某次 keys 写失败回滚时,已删凭据会从
+                    # 快照"复活"并再被写回磁盘(违反「删除即删除」)
                     self._keys.pop(instance_id, None)
+                    self._keys_snapshot.pop(instance_id, None)
                     print(
                         f"[QuotaBar] 账号 {instance_id} 删除后恢复失败(磁盘可能是半删状态):{e}",
                         file=sys.stderr,
@@ -488,9 +630,15 @@ class ConfigService:
         """按给定顺序重排账号(拖拽排序用)。未列出的账号保持在后面。"""
         with self._lock:
             by_id = {it["id"]: it for it in self._settings["instances"]}
-            rest = [it for it in self._settings["instances"] if it["id"] not in ordered_ids]
-            new_order = [by_id[i] for i in ordered_ids if i in by_id] + rest
-            self._settings["instances"] = new_order
+            # 传入序列可能带重复 id(UI 层传错):去重,否则同一实例会被排进列表两次
+            ordered_unique: list[str] = []
+            seen: set[str] = set()
+            for iid in ordered_ids:
+                if iid in by_id and iid not in seen:
+                    seen.add(iid)
+                    ordered_unique.append(iid)
+            rest = [it for it in self._settings["instances"] if it["id"] not in seen]
+            self._settings["instances"] = [by_id[i] for i in ordered_unique] + rest
             self._save_settings()
 
     def move_instance(self, instance_id: str, offset: int) -> None:
@@ -585,6 +733,7 @@ class ConfigService:
 
         顺序与 macOS 版一致:**先按原始名单查数**(3 个一律拒),再过滤死 label。
         反过来做的话,「3 个里混 1 个死 label」会被悄悄缩成 2 个而通过。
+        重复项计入原始数量(与 Swift 同口径),落盘前去重保序。
         """
         with self._lock:
             inst = self._find_instance(instance_id)
@@ -593,7 +742,11 @@ class ConfigService:
                 raise ConfigRuleError("每账号最多勾选 2 个指标")
             if not labels:
                 raise ConfigRuleError("每账号至少勾选 1 个指标")
-            cleaned = [l for l in labels if l in allowed]
+            cleaned: list[str] = []
+            for label in labels:
+                # 去重保序:重复勾选会被菜单显示成勾了 2 个、面板只显示 1 个
+                if label in allowed and label not in cleaned:
+                    cleaned.append(label)
             if not cleaned:
                 raise ConfigRuleError("勾选的指标已全部下架")
             self._state(instance_id)["enabled_metrics"] = cleaned
@@ -610,14 +763,39 @@ class ConfigService:
 
         写盘失败时由 _save_keys 回滚内存值(旧值恢复),异常继续抛给调用方——
         界面必须能告诉用户「没保存成功」,否则重启后凭据凭空消失。
+
+        实例必须存在才写:删除账号与保存凭据并发时(详情窗先查存在、随后账号
+        被删),不校验的话凭据会写进 keys.json 留成孤儿。校验在锁内做,与
+        delete_instance 互斥,竞态窗口闭合:要么这里抛 KeyError,要么删除随后
+        会把这把 key 一并清掉。
         """
         with self._lock:
+            self._find_instance(instance_id)
             clean = _sanitize_text(key)
             if clean:
                 self._keys[instance_id] = clean
             else:
                 self._keys.pop(instance_id, None)
             self._save_keys()
+
+    def compare_and_set_api_key(self, instance_id: str, expected: str, new: str) -> bool:
+        """原子 CAS(自动续期写回专用):仅当当前凭据仍等于 expected 时写入。
+
+        比较与写入必须在同一把锁内:先 `api_key()` 再 `set_api_key()` 是两次
+        独立加锁,中间用户保存了新凭据时,旧凭据刷出的串会把用户的新值覆盖掉
+        (「改完 key 自己变回去」)。
+        """
+        with self._lock:
+            if self._keys.get(instance_id, "") != expected:
+                return False
+            self._find_instance(instance_id)
+            clean = _sanitize_text(new)
+            if clean:
+                self._keys[instance_id] = clean
+            else:
+                self._keys.pop(instance_id, None)
+            self._save_keys()
+            return True
 
     def is_configured(self, instance_id: str) -> bool:
         """是否已配置好可取数:有凭据 + 有取数端点。
@@ -750,9 +928,10 @@ class ConfigService:
             pos = self._settings["globals"].get("overlay_pos")
             if isinstance(pos, list) and len(pos) == 2:
                 try:
-                    return int(pos[0]), int(pos[1])
-                except (TypeError, ValueError):
-                    return None  # 手改成字符串/NaN:当作没记过位置
+                    x, y = int(pos[0]), int(pos[1])
+                except (TypeError, ValueError, OverflowError):
+                    return None  # 手改成字符串/NaN/inf:当作没记过位置
+                return x, y
             return None
 
     def set_overlay_pos(self, pos: tuple[int, int]) -> None:

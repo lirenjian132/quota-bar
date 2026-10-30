@@ -31,9 +31,19 @@ class I18n:
             path = f"{self._dir}/{loc}.json"
             try:
                 with open(path, encoding="utf-8") as f:
-                    self._tables[loc] = json.load(f)
+                    table = json.load(f)
             except (OSError, json.JSONDecodeError):
                 self._tables[loc] = {}
+                continue
+            # 资源表结构校验:根必须是 dict 且所有值都是 str。
+            # 被杀软改写/打包漏文件时,坏表会让 t() 抛 AttributeError 或把
+            # 非字符串塞进 QLabel(QLabel(123) 会被当成父窗口参数)。
+            if not isinstance(table, dict):
+                self._tables[loc] = {}
+                continue
+            self._tables[loc] = {
+                str(key): value for key, value in table.items() if isinstance(key, str) and isinstance(value, str)
+            }
 
     @property
     def locale(self) -> str:

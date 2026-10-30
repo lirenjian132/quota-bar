@@ -51,8 +51,10 @@ def metric_ratio(metric: UsageMetric) -> Optional[float]:
         return None
     ratio = metric.current_value / metric.total_value
     # 非有限值(inf/NaN)会让后面的 int() 抛 OverflowError/ValueError,
-    # 从取数一路炸到界面重绘——这里直接当作无数据
-    if not math.isfinite(ratio):
+    # 从取数一路炸到界面重绘——这里直接当作无数据。
+    # 有限但离谱的比例(1e308/1 这种畸形数据)同样挡掉:进度条的
+    # int(ratio*1000) 会溢出,文本层也会变成几百位数字。
+    if not math.isfinite(ratio) or abs(ratio) > 1e6:
         return None
     return ratio
 
@@ -75,16 +77,20 @@ def _safe_int(value: float) -> Optional[int]:
         return None
 
 
-def status_color(data: Optional[PlatformUsageData]) -> str:
+def status_color(data: Optional[PlatformUsageData], metrics: Optional[list[UsageMetric]] = None) -> str:
     """状态点颜色;判定顺序与 macOS 版一致,顺序不可变:
     无数据→灰;空 metrics→灰;不健康→红;首指标比例<10%红、<50%黄、否则绿;
     绝对量型(余额)看到期时间 <3 天红、<7 天黄。
+
+    metrics 传用户勾选后的可见指标(与 macOS 的 statusColor(for:metrics:) 对齐):
+    只勾了 MCP 月度时,圆点要按 MCP 的余量变红变黄,不能按未展示的 five_hour 装绿。
     """
     if data is None or not data.metrics:
         return COLOR_GRAY
     if not data.is_healthy:
         return COLOR_RED
-    first = data.metrics[0]
+    candidates = metrics if metrics else data.metrics
+    first = candidates[0]
     ratio = _ratio(first)
     if ratio is not None:
         if ratio < 0.1:
@@ -103,8 +109,9 @@ def status_color(data: Optional[PlatformUsageData]) -> str:
 
 def format_balance(value: float) -> str:
     """余额缩写:>=1000 显示 "1.2K",否则取整"""
-    if not math.isfinite(value):
-        return "--"  # inf/NaN:不能进格式化
+    if not math.isfinite(value) or abs(value) > 1e15:
+        # inf/NaN 不能进格式化;离谱有限值(1e300)会输出几百位数字把面板撑爆
+        return "--"
     if value >= 1000:
         return f"{value / 1000:.1f}K"
     return f"{value:.0f}"
@@ -165,6 +172,9 @@ def metric_detail_text(metric: UsageMetric, locale: str) -> str:
         if cur == "--" or total == "--":
             return "--"  # 有一侧是离谱数值:整条显示无意义
         return f"{cur}/{total} {metric.unit}".strip()
+    # 兜底分支同样挡离谱值:1e300 会变成几百位数字
+    if abs(metric.current_value) > 1e15:
+        return "--"
     return f"{metric.current_value:.0f} {metric.unit}".strip()
 
 
@@ -194,6 +204,9 @@ def reset_countdown(reset_time: float, now: Optional[float] = None) -> tuple[str
     remain = reset_time - now
     if remain <= 60:
         return "soon", None
+    # 离谱时间戳(上游毫秒/纳秒混用)会把倒计时画成几百位数字:封顶 9999 天
+    if remain > 9999 * 86400:
+        remain = 9999 * 86400
     total_min = int(remain // 60)
     days, rest_min = divmod(total_min, 1440)
     if total_min >= 25 * 60:

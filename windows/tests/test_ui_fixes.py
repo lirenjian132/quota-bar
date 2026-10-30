@@ -148,6 +148,24 @@ def test_open_login_cancelled_does_not_harvest_cookie(qapp, tray, monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
+        def set_phase(self, text):
+            pass
+
+        def show(self):
+            pass
+
+        def isVisible(self):
+            return True
+
+        def setWindowModality(self, mode):
+            pass
+
+        def result(self):
+            return 0
+
+        def deleteLater(self):
+            pass
+
         def exec_(self):
             from PyQt5.QtWidgets import QDialog
 
@@ -160,6 +178,7 @@ def test_open_login_cancelled_does_not_harvest_cookie(qapp, tray, monkeypatch):
     detail._open_login(inst.platform_type)  # 对话框直接走 reject 路径
 
     assert session.credential_called is False
+    assert session.closed is True  # 取消也要收尾:浏览器进程与临时目录不能泄漏
     assert detail._api_key_text == ""
 
 

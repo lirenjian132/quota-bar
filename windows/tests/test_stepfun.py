@@ -43,11 +43,15 @@ def rate_payload(**overrides) -> dict:
 
 
 def status_payload(**overrides) -> dict:
+    # expired_at 动态生成 400 天后的 Unix 秒:写死日期是定时炸弹(过了 3 天健康
+    # 阈值那一刻,断言 is_healthy 的测试集体变红)
+    import time as _time
+
     body = {
         "status": 1,
         "desc": "",
         "subscription": {"plan_type": 2, "name": "Pro", "status": 1,
-                         "expired_at": "1825171280", "auto_renew": False},
+                         "expired_at": str(int(_time.time() + 400 * 86400)), "auto_renew": False},
     }
     body.update(overrides)
     return body

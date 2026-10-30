@@ -305,6 +305,9 @@ final class PlatformViewModel: ObservableObject {
         // 不清则接下来 5 分钟内拉取到的仍是旧 key 的结果. 新 key 要让随后的
         // fetchUsage 真正发请求 — 新 key 无效时应立刻报错而不是显示旧账号的余量.
         platformManager.clearCache(for: instance)
+        // 新凭据同时解除 Stepfun 刷新失败冷却:否则冷却期内跳过预刷新,
+        // access token 一过期就 401, 刚保存的新 key 像"没生效"
+        platformManager.clearRefreshCooldown(instanceID: instance.id)
 
         showingConfig = false
         configInstance = nil
@@ -361,6 +364,9 @@ final class PlatformViewModel: ObservableObject {
         let store = configService.store(for: instance)
         store.setAPIKey(WebLoginRenewalConfig.storageCredential(from: credential, platform: platform))
         platformManager.clearCache(for: instance)
+        // 重登成功即解除刷新冷却(理由同 saveAPIKey):新 cookie 的 access token
+        // 常常剩余不足 300s, 冷却期内跳过预刷新会让这次重登"白登"
+        platformManager.clearRefreshCooldown(instanceID: instance.id)
         fetchUsage(for: instance)
     }
 

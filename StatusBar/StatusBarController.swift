@@ -407,8 +407,10 @@ class StatusBarController {
             targetItem.button?.performClick(nil)
             targetItem.menu = nil
         } else {
-            // 主 item 隐藏了, 用第一个 pinned item
-            if let firstPinned = pinnedItems.values.first(where: { $0.isVisible }) {
+            // 主 item 隐藏了, 用第一个有按钮的 pinned item
+            // (button == nil 的 item 也在 pinnedItems 里, 只为让 rebuild 能清掉,
+            //  拿它当菜单宿主会静默不弹)
+            if let firstPinned = pinnedItems.values.first(where: { $0.isVisible && $0.button != nil }) {
                 firstPinned.menu = rootMenu
                 firstPinned.button?.performClick(nil)
                 firstPinned.menu = nil
@@ -759,7 +761,13 @@ class StatusBarController {
             enabledMetrics: ConfigService.shared.enabledMetrics(for: instance)
         ))
 
-        guard let button = item.button else { return }
+        guard let button = item.button else {
+            // button 拿不到时也要登记: 不进 pinnedItems 的话 rebuildPinnedItems
+            // 永远清不掉它, 状态栏会泄漏一个空槽
+            pinnedItems[instance.id] = item
+            pinnedViews[instance.id] = view
+            return
+        }
         button.frame.size.height = NSStatusBar.system.thickness
         view.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(view)

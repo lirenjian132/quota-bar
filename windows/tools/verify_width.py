@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 
@@ -15,7 +16,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 
 def main() -> int:
-    os.environ["QUOTABAR_HOME"] = tempfile.mkdtemp()
+    home = tempfile.mkdtemp(prefix="quotabar-verify-width-")
+    os.environ["QUOTABAR_HOME"] = home
+    try:
+        _run()
+    finally:
+        shutil.rmtree(home, ignore_errors=True)  # 临时目录用完即清,不越积越多
+    return 0
+
+
+def _run() -> None:
     from PyQt5.QtWidgets import QApplication
 
     app = QApplication([])
@@ -51,7 +61,6 @@ def main() -> int:
     assert overlay.width() < widths[-1]
     print("OK:宽度随账号数自动伸缩")
     app.quit()
-    return 0
 
 
 if __name__ == "__main__":
