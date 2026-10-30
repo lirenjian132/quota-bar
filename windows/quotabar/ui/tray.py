@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Callable, Optional
 
@@ -45,6 +46,8 @@ _STATUS_COLORS = {
 _ICON_SIZE = 32                # 托盘图标画布
 _MAIN_ICON_KEY = "__main__"    # 无钉选实例时单个主图标的字典 key
 _RELEASES_URL = "https://github.com/lirenjian132/quota-bar/releases"
+#: 托盘 tooltip 字符上限(Windows 通知区域约 127 字符,超出被静默截断)
+_TOOLTIP_MAX_CHARS = 127
 
 #: 刷新间隔档位 → i18n key(顺序即菜单顺序)
 _REFRESH_ITEMS: tuple[tuple[RefreshInterval, str], ...] = (
@@ -60,6 +63,12 @@ class _FetchBridge(QObject):
     """后台取数线程 → GUI 线程的结果桥:pyqtSignal 保证槽函数跑在 GUI 线程"""
 
     finished = pyqtSignal(object)  # payload = (list[FetchResult], 本次拉取的实例 id 列表)
+
+
+class _WriteState:
+    """一次配置写入的结果:ok=False 表示落盘失败(内存已回滚)"""
+
+    ok = True
 
 
 class TrayApp(QObject):
@@ -81,6 +90,8 @@ class TrayApp(QObject):
         self._icon_instance: dict[str, str] = {}
         self._detail: Optional[DetailWindow] = None
         self._menu: Optional[QMenu] = None
+        #: 新建但还没配凭据的账号:配置前取消要回收(对齐 macOS)
+        self._pending_instance_id: Optional[str] = None
         # 任务栏数字面板:Windows 上 Mac 菜单栏的对等物(大号数字,托盘小图标只作备用入口)
         self._overlay = StatusOverlay(self)
         self._bridge = _FetchBridge()
@@ -95,6 +106,7 @@ class TrayApp(QObject):
 
     def start(self) -> None:
         """启动定时刷新,并立即拉一次数据"""
+        self._ensure_entry_point()
         self._restart_timer()
         self._show_startup_bubble()
         if self.config.overlay_enabled():
@@ -102,6 +114,21 @@ class TrayApp(QObject):
             self._overlay.attach()   # 嵌入任务栏(在 show 之后,否则会被 Qt 重置)
         self._overlay.refresh()
         self.fetch_all_async()
+
+    def _ensure_entry_point(self) -> None:
+        """启动自愈:面板与托盘图标不能同时关着。
+
+        两个入口都关掉时进程还活着(setQuitOnLastWindowClosed 为 False)、
+        定时器还在打网络,但用户既打不开详情窗也点不出菜单,只能去任务管理器
+        杀进程。正常路径不会写出这种配置,但历史遗留/手改可能——启动时兜住。
+        """
+        if self.config.overlay_enabled() or self.config.tray_icon_enabled():
+            return
+        try:
+            self.config.set_entry_visibility(overlay=True, tray=False)
+        except (OSError, TypeError, UnicodeEncodeError, KeyError):
+            pass  # 落盘失败:至少先把界面开出来
+        self._overlay.show()
     def _show_startup_bubble(self) -> None:
         """启动气泡:Windows 下新应用的托盘图标可能落进「^」折叠区,弹一次让用户发现图标。
 
@@ -173,6 +200,8 @@ class TrayApp(QObject):
         instance_id = loading_ids[0]
         try:
             results = [FetchResult(instance_id=instance_id, data=self.manager.fetch_usage(instance_id))]
+        except KeyError:
+            return  # 实例已被删:不必报错,界面侧会跳过
         except PlatformError as e:
             results = [FetchResult(instance_id=instance_id, error=e)]
         except Exception as e:
@@ -308,9 +337,28 @@ class TrayApp(QObject):
                 title = i18n.t(key)
                 if title == key:
                     title = second.label
-                line += f" ({title} {render.metric_detail_text(second, i18n.locale)})"
+                # 第二指标与主指标同一口径(都按显示模式):否则一行里会出现
+                # 「已用 20%」和「剩余 59%」这种自相矛盾的两个数字
+                value = render.metric_value_text(second, mode, i18n.locale)
+                line += f" ({title} {value})"
             lines.append(line)
-        return "\n".join(lines) if lines else i18n.t("app.name")
+        if not lines:
+            return i18n.t("app.name")
+        # Windows 托盘 tooltip 上限约 127 字符,超出被系统静默截断(后面的账号
+        # 直接看不见)。这里自己截,并补一行"共 N 个账号"说明还有多少。
+        if len("\n".join(lines)) <= _TOOLTIP_MAX_CHARS:
+            return "\n".join(lines)
+        kept: list[str] = []
+        used = 0
+        for line in lines:
+            need = len(line) + (1 if kept else 0)
+            if kept and used + need > _TOOLTIP_MAX_CHARS - 24:
+                break
+            clipped = line[:_TOOLTIP_MAX_CHARS - 24]
+            kept.append(clipped)
+            used += len(clipped) + (1 if len(kept) > 1 else 0)
+        more = i18n.t("menu.trayTooltipMore", len(lines))
+        return "\n".join(kept + [more])
 
     # ------------------------------------------------------------ 图标点击
 
@@ -321,14 +369,14 @@ class TrayApp(QObject):
             self._show_menu()
 
     def _toggle_detail(self) -> None:
-        if self._detail is None:
-            self._detail = DetailWindow(self)
-        if self._detail.isVisible():
+        if self._detail is not None and self._detail.isVisible():
+            # 配置面板被程序化隐藏(点面板 chip、托盘左键):等同「取消」——
+            # 否则新建的空壳账号不会被回收,详情窗下次打开还停在配置面板
+            if self._detail.is_configuring():
+                self._detail._cancel_config()
             self._detail.hide()
             return
-        self._detail.reload()
-        self._detail.show()
-        self._detail.raise_()
+        self._ensure_detail_visible()
         self._detail.activateWindow()
         self.fetch_all_async()
 
@@ -512,44 +560,71 @@ class TrayApp(QObject):
         不变式:面板与托盘图标至少留一个入口。否则进程还在(setQuitOnLastWindowClosed
         为 False,不会自杀)、定时器还在打网络,但用户既打不开详情窗也点不出菜单,
         只能去任务管理器杀进程——等于把应用锁死。
+
+        两个开关一起改时用**一次落盘**(set_entry_visibility):分两次写的话,
+        第二步失败会留下「面板关 + 托盘关」的落盘状态,重启后彻底没有入口。
         """
-        self.config.set_overlay_enabled(checked)
-        if not checked:
-            if not self.config.tray_icon_enabled():
-                self.config.set_tray_icon_enabled(True)
-                self._rebuild_trays()
-        else:
-            self._overlay.refresh()
+        with self._config_write() as st:
+            if not checked and not self.config.tray_icon_enabled():
+                self.config.set_entry_visibility(overlay=False, tray=True)
+            else:
+                self.config.set_overlay_enabled(checked)
+        if not st.ok:
+            return  # 落盘失败:配置已回滚,界面保持原状
+        if checked:
             self._overlay.show()
+            if self.config.overlay_embedded():
+                # 嵌入模式重新打开:要补一次嵌入(explorer 重启过的话旧句柄已失效)
+                self._overlay.ensure_embedded_state()
+        else:
+            # 关闭必须真的把面板收起来(只改配置不 hide,面板会一直挂在任务栏上)
+            self._overlay.hide()
+            self._rebuild_trays()
         self._overlay.refresh()
 
     def _toggle_show_percent(self, checked: bool) -> None:
         """面板数值是否带 % 号"""
-        self.config.set_show_percent(checked)
+        with self._config_write() as st:
+            self.config.set_show_percent(checked)
+        if not st.ok:
+            return
         self._overlay.refresh()
 
     def _toggle_tray_icon(self, checked: bool) -> None:
         """托盘图标开关:关闭后托盘区不再有图标,面板与详情窗照常。
 
         不变式:托盘图标关闭时面板必须开着(否则没有任何入口)。
+        两个开关一起改时同样用一次落盘。
         """
-        if not checked and not self.config.overlay_enabled():
-            self.config.set_overlay_enabled(True)
-            self._overlay.refresh()
+        with self._config_write() as st:
+            if not checked and not self.config.overlay_enabled():
+                self.config.set_entry_visibility(overlay=True, tray=False)
+            else:
+                self.config.set_tray_icon_enabled(checked)
+        if not st.ok:
+            return
+        if not checked and self.config.overlay_enabled():
             self._overlay.show()
-        self.config.set_tray_icon_enabled(checked)
+            if self.config.overlay_embedded():
+                self._overlay.attach()  # 嵌入模式要把面板送回任务栏,不能只当浮层
         self._rebuild_trays()
 
     def _set_overlay_anchor(self, anchor: str, sub: Optional[QMenu] = None) -> None:
         """面板锚点:靠任务栏左端 / 靠通知区"""
-        self.config.set_overlay_anchor(anchor)
+        with self._config_write() as st:
+            self.config.set_overlay_anchor(anchor)
+        if not st.ok:
+            return
         if sub is not None:
             self._sync_check_group(sub, anchor)
         self._overlay.refresh()
 
     def _toggle_overlay_embedded(self, checked: bool) -> None:
         """切换「嵌入任务栏」与「浮层」两种形态"""
-        self.config.set_overlay_embedded(checked)
+        with self._config_write() as st:
+            self.config.set_overlay_embedded(checked)
+        if not st.ok:
+            return
         if checked:
             self._overlay.attach()
         else:
@@ -557,14 +632,20 @@ class TrayApp(QObject):
         self._overlay.refresh()
 
     def _set_display_mode(self, mode: str, sub: Optional[QMenu] = None) -> None:
-        self.config.set_display_mode(mode)
+        with self._config_write() as st:
+            self.config.set_display_mode(mode)
+        if not st.ok:
+            return
         if sub is not None:
             self._sync_check_group(sub, mode)
         self._rebuild_trays()
         self._reload_detail()
 
     def _set_refresh_interval(self, interval: RefreshInterval, sub: Optional[QMenu] = None) -> None:
-        self.config.set_refresh_interval(interval)
+        with self._config_write() as st:
+            self.config.set_refresh_interval(interval)
+        if not st.ok:
+            return
         if sub is not None:
             self._sync_check_group(sub, interval.value)
         self._restart_timer()
@@ -572,7 +653,11 @@ class TrayApp(QObject):
 
     def _set_locale(self, locale: str, sub: Optional[QMenu] = None) -> None:
         get_i18n().set_locale(locale)
-        self.config.set_locale(locale)
+        with self._config_write() as st:
+            self.config.set_locale(locale)
+        if not st.ok:
+            get_i18n().set_locale(self.config.locale())  # 回滚语言
+            return
         if sub is not None:
             self._sync_check_group(sub, locale)
         self._rebuild_trays()
@@ -588,7 +673,8 @@ class TrayApp(QObject):
     def _toggle_enabled(self, instance_id: str, act) -> None:
         new_state = not self.config.is_enabled(instance_id)
         try:
-            self.config.set_enabled(instance_id, new_state)
+            with self._config_write():
+                self.config.set_enabled(instance_id, new_state)
         except ValueError:
             QMessageBox.warning(
                 self._message_parent(),
@@ -601,7 +687,8 @@ class TrayApp(QObject):
 
     def _toggle_pinned(self, instance_id: str) -> None:
         try:
-            self.config.set_pinned(instance_id, not self.config.is_pinned(instance_id))
+            with self._config_write():
+                self.config.set_pinned(instance_id, not self.config.is_pinned(instance_id))
         except ValueError:
             return  # 未启用实例不可钉选(菜单项已置灰,双保险)
         self._on_config_changed()
@@ -620,11 +707,19 @@ class TrayApp(QObject):
         if not ok:
             return
         # 留空由 config 内部回退平台默认名
-        self.config.rename_instance(instance_id, text)
+        with self._config_write():
+            try:
+                self.config.rename_instance(instance_id, text)
+            except KeyError:
+                return  # 实例已被删(菜单开着的时候被别的路径删了):静默忽略
         self._on_config_changed()
 
     def _move_account(self, instance_id: str, offset: int) -> None:
-        self.config.move_instance(instance_id, offset)
+        with self._config_write():
+            try:
+                self.config.move_instance(instance_id, offset)
+            except (KeyError, ValueError):
+                return  # 实例已被删:静默忽略(对齐 macOS 的 guard)
         self._on_config_changed()
 
     def _delete_account(self, instance_id: str) -> None:
@@ -642,7 +737,13 @@ class TrayApp(QObject):
         box.exec_()
         if box.clickedButton() is not ok_button:
             return
-        self.config.delete_instance(instance_id)
+        with self._config_write() as st:
+            try:
+                self.config.delete_instance(instance_id)
+            except KeyError:
+                st.ok = False  # 确认框开着时账号已被别的路径删了
+        if not st.ok:
+            return
         self._data.pop(instance_id, None)
         self._errors.pop(instance_id, None)
         self._loading.discard(instance_id)
@@ -651,8 +752,54 @@ class TrayApp(QObject):
         self._on_config_changed()
 
     def _add_account(self, platform: PlatformType) -> None:
-        self.config.add_instance(platform)
+        """新增账号:直接进配置态。
+
+        对齐 macOS 版——新增后立刻弹配置框让用户填凭据;配置前取消就把
+        空壳账号回收掉,不在菜单里堆积没配置的"幽灵账号"。
+        """
+        with self._config_write() as st:
+            inst = self.config.add_instance(platform)
+        if not st.ok:
+            return
+        self._pending_instance_id = inst.id
         self._on_config_changed()
+        self._ensure_detail_visible()
+        self._detail._open_config(inst.id)
+
+    def _on_config_cancelled(self, instance_id: str) -> None:
+        """配置面板被取消:新建的空壳账号回收(对齐 macOS)"""
+        if self._pending_instance_id != instance_id:
+            return
+        self._pending_instance_id = None
+        if self.config.is_configured(instance_id):
+            return  # 已经配好了,不是空壳
+        with self._config_write() as st:
+            try:
+                self.config.delete_instance(instance_id)
+            except KeyError:
+                st.ok = False
+        if not st.ok:
+            return
+        self._data.pop(instance_id, None)
+        self._errors.pop(instance_id, None)
+        self._loading.discard(instance_id)
+        self._gen.pop(instance_id, None)
+        self.manager.remove_instance(instance_id)
+        self._on_config_changed()
+
+    def _on_config_saved(self, instance_id: str) -> None:
+        """配置面板保存成功:不再是待回收的空壳账号"""
+        if self._pending_instance_id == instance_id:
+            self._pending_instance_id = None
+
+    def _ensure_detail_visible(self) -> None:
+        """确保详情窗已打开(不切换显隐)"""
+        if self._detail is None:
+            self._detail = DetailWindow(self)
+        if not self._detail.isVisible():
+            self._detail.reload()
+            self._detail.show()
+            self._detail.raise_()
 
     def _toggle_metric(self, instance_id: str, label: str, sub: QMenu) -> None:
         cfg = self.config
@@ -662,7 +809,8 @@ class TrayApp(QObject):
         else:
             current.append(label)
         try:
-            cfg.set_enabled_metrics(instance_id, current)
+            with self._config_write():
+                cfg.set_enabled_metrics(instance_id, current)
         except ValueError:
             self._sync_metric_checks(sub, instance_id)  # 被拒时按落盘状态回滚勾态,防菜单与配置不一致
             return  # 超过 2 个等非法输入由 config 拒绝
@@ -703,8 +851,15 @@ class TrayApp(QObject):
             self.fetch_all_async()
 
     def _needs_data(self) -> bool:
-        for instance_id in self._icon_instance.values():
-            if instance_id and instance_id not in self._data and self.config.is_configured(instance_id):
+        """有没有「已启用已配置但还没数据」的账号(需要补拉一次)。
+
+        必须遍历全部账号而不是只遍历托盘图标集合:托盘图标默认关闭时图标集合
+        恒空,新加的账号会一直显示 "--" 直到下一个刷新周期(最长 10 分钟)。
+        """
+        for inst in self.config.instances():
+            if inst.id in self._data:
+                continue
+            if self.config.is_enabled(inst.id) and self.config.is_configured(inst.id):
                 return True
         return False
 
@@ -713,6 +868,35 @@ class TrayApp(QObject):
         if self._detail is not None and self._detail.isVisible():
             return self._detail
         return None
+
+    @contextmanager
+    def _config_write(self):
+        """配置落盘的统一出口:写盘失败时提示用户并回滚。
+
+        不提示的话,界面会显示"已保存",重启后设置却悄悄消失——用户完全
+        无从察觉。ConfigService 侧已回滚内存状态,这里负责告知,并把
+        写入结果通过 st.ok 交给调用方:失败时调用方要跳过界面联动,
+        否则界面显示的状态与落盘的不一致。
+        """
+        st = _WriteState()
+        try:
+            yield st
+        except (OSError, TypeError, UnicodeEncodeError, KeyError, RecursionError) as e:
+            # OSError:磁盘满/无权限;UnicodeEncodeError:内容里有代理字符,编不出;
+            # TypeError:数据结构不对;KeyError:实例已被别的路径删掉;
+            # RecursionError:配置嵌套过深。都算「没保存成功」,统一提示 + 回滚。
+            # **不捕 ValueError**:那是业务规则拒绝(ConfigRuleError),要交给
+            # 调用方自己的 except ValueError 分支给对应提示,不能混成「保存失败」。
+            self._report_save_error(e)
+            st.ok = False
+
+    def _report_save_error(self, e: Exception) -> None:
+        """落盘失败提示"""
+        QMessageBox.warning(
+            self._message_parent(),
+            get_i18n().t("app.name"),
+            get_i18n().t("error.saveFailed", str(e)),
+        )
 
 
 def _wrap_error(e: Exception) -> PlatformError:

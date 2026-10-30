@@ -10,8 +10,10 @@ PlatformConfigStore / FileKeyStore 四个存储的职责。
 
 from __future__ import annotations
 
+import copy
 import json
 import os
+import shutil
 import sys
 import threading
 from typing import Optional
@@ -29,6 +31,86 @@ KEYS_FILE = "keys.json"
 
 _DISPLAY_USED = "used"
 _DISPLAY_REMAINING = "remaining"
+
+
+class ConfigRuleError(ValueError):
+    """业务规则拒绝(不是落盘失败)。
+
+    与「写盘失败」必须区分开:规则拒绝是正常反馈(比如勾了 3 个指标、禁用最后
+    一个账号),UI 要给对应的提示;落盘失败才提示「保存失败」。
+    它继承 ValueError,现有的 `except ValueError` 分支照旧能接住。
+    """
+
+
+def _sanitize_text(value) -> str:
+    """清掉编不出 UTF-8 的代理字符(剪贴板里被截断的 emoji 会带 \\ud800 这类字符)。
+
+    这种字符一旦进了配置文件,之后**每一次**落盘都会抛 UnicodeEncodeError——
+    不只是那个账号改名改不动,连改别的设置都存不下去。
+    """
+    if not isinstance(value, str):
+        return ""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        value = value.encode("utf-8", "replace").decode("utf-8")
+    # 控制字符(换行等)会让显示名在 tooltip 里伪造成多一行
+    return "".join(ch for ch in value if ch == "	" or ord(ch) >= 32)
+
+
+def _sanitize_per_instance(st: dict) -> dict:
+    """收拾每实例配置:字段类型归位 + 字符串清毒。
+
+    - 字符串字段必须是 str(被手改成 dict 时,is_configured 会判成"已配置",
+      取数时才炸出裸 TypeError)
+    - enabled_metrics 必须是字符串列表(写成数字时,读指标那一步直接 TypeError,
+      整个应用起不来)
+    """
+    out: dict = {}
+    for key in ("enabled", "pinned"):
+        out[key] = bool(st.get(key, False))
+    metrics = st.get("enabled_metrics")
+    if isinstance(metrics, (list, tuple)):
+        out["enabled_metrics"] = [_sanitize_text(m) for m in metrics if isinstance(m, str)]
+    else:
+        out["enabled_metrics"] = []
+    for key in ("api_base_url", "api_base_url_international", "auth_header", "auth_prefix", "region"):
+        value = st.get(key)
+        out[key] = _sanitize_text(value) if isinstance(value, str) else ""
+    return out
+
+#: 模板文件缺失时的兜底取值。
+#: 打包(PyInstaller/zip)漏带 Resources 目录时,模板读不到 → api_base_url 为空 →
+#: 账号永远停在「未配置」,用户粘了 key 也没反应,且没有任何诊断信息。
+#: 这里内置一份同样的默认值,保证取数端点永远拿得到(有单测钉住两份取值一致)。
+_TEMPLATE_FALLBACK: dict[str, dict] = {
+    "minimax": {
+        "api_base_url": "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+        "api_base_url_international": "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+        "region": "domestic",
+    },
+    "glm": {
+        "api_base_url": "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+        "api_base_url_international": "https://api.z.ai/api/monitor/usage/quota/limit",
+        "auth_header": "Authorization",
+        "auth_prefix": "",
+        "region": "domestic",
+    },
+    "stepfun": {
+        "api_base_url": "https://platform.stepfun.com/api/step.openapi.devcenter.Dashboard",
+        "auth_header": "Cookie",
+        "auth_prefix": "",
+        "region": "domestic",
+    },
+    "tokenrhythm": {
+        "api_base_url": "https://tokenrhythm.studio/api/wallet/summary",
+        "auth_header": "Cookie",
+        "auth_prefix": "tr_session=",
+        "region": "domestic",
+    },
+}
 
 
 def default_home() -> str:
@@ -52,20 +134,141 @@ class ConfigService:
         self._settings_path = os.path.join(self._home, SETTINGS_FILE)
         self._keys_path = os.path.join(self._home, KEYS_FILE)
         self._lock = threading.RLock()
-        self._settings = self._load_json(self._settings_path)
-        if self._settings is None:
-            self._settings = self._default_settings()
-        self._keys: dict[str, str] = self._load_json(self._keys_path) or {}
+        self._settings = self._load_settings()
+        self._keys: dict[str, str] = self._load_keys()
         self._normalize()
+        # 上一次落盘成功的快照:写盘失败时回滚到它,保证「内存 = 磁盘」不被拆开
+        self._settings_snapshot = copy.deepcopy(self._settings)
+        self._keys_snapshot = dict(self._keys)
 
     def _normalize(self) -> None:
-        """兼容旧数据:确保字段齐全(__init__ 与 reload 共用)"""
-        self._settings.setdefault("instances", [])
-        self._settings.setdefault("tombstones", [])
-        self._settings.setdefault("globals", {})
-        self._settings.setdefault("per_instance", {})
+        """兼容旧数据 + 结构自愈(__init__ 与 reload 共用)。
+
+        字段缺失补齐;容器类型不对的回落默认;坏掉的账号条目剔除(其余账号不受影响);
+        每实例配置缺失/类型不对的**补一份默认值**——少了它,账号会变成
+        「在列表里但取不到配置」的僵尸,is_enabled 之类取值直接抛 KeyError,
+        整个应用启动即崩。
+        结构坏到连 dict 都不是时整体回落默认——否则启动即崩,用户无法自愈。
+        """
+        if not isinstance(self._settings, dict):
+            self._settings = self._default_settings()
+            return
+        if not isinstance(self._settings.get("instances"), list):
+            self._settings["instances"] = []
+        if not isinstance(self._settings.get("tombstones"), list):
+            self._settings["tombstones"] = []
+        if not isinstance(self._settings.get("globals"), dict):
+            self._settings["globals"] = {}
+        if not isinstance(self._settings.get("per_instance"), dict):
+            self._settings["per_instance"] = {}
+        # 账号条目逐个校验:坏的剔除、好的保留(不让一个坏条目带走全部账号)
+        valid: list[dict] = []
+        dropped = False
+        for it in self._settings["instances"]:
+            if not isinstance(it, dict):
+                dropped = True
+                continue
+            iid = _sanitize_text(it.get("id"))
+            ptype = it.get("platform_type")
+            if not iid or not isinstance(ptype, str):
+                dropped = True
+                continue
+            try:
+                platform = PlatformType(ptype)
+            except ValueError:
+                dropped = True
+                continue  # 未知平台(版本回退/手改):剔除,别拖垮启动
+            name = _sanitize_text(it.get("display_name"))
+            valid.append(
+                {
+                    "id": iid,
+                    "platform_type": ptype,
+                    "display_name": name or platform.display_name(),
+                }
+            )
+        self._settings["instances"] = valid
+        self._settings["tombstones"] = [
+            t for t in (_sanitize_text(x) for x in self._settings["tombstones"] if isinstance(x, str)) if t
+        ]
+        # 每实例配置必须是 dict,否则 is_enabled 等取值时会崩
+        per = self._settings["per_instance"]
+        cleaned: dict[str, dict] = {}
+        for k, v in per.items():
+            if not isinstance(k, str) or not isinstance(v, dict):
+                dropped = True
+                continue
+            key = _sanitize_text(k)
+            if not key:
+                dropped = True
+                continue
+            cleaned[key] = _sanitize_per_instance(v)
+        if len(cleaned) != len(per):
+            dropped = True  # 有条配置坏了被替换掉 → 算数据改动,留备份
+        # 缺配置的账号补一份默认值,保证「账号 ↔ 配置」一一对应。
+        # 补默认不算丢数据(原来就没有),不触发备份——否则每次启动都多一份 .corrupt。
+        for inst in valid:
+            if inst["id"] not in cleaned:
+                cleaned[inst["id"]] = self._default_per_instance(PlatformType(inst["platform_type"]))
+        self._settings["per_instance"] = cleaned
+        if dropped:
+            # 剔掉了东西就留个备份(原文件挪走,后续保存会写一份干净的)
+            self._backup_corrupt(self._settings_path)
+
+    def _default_per_instance(self, platform: PlatformType) -> dict:
+        """某平台的默认每实例配置(模板填充 + 默认勾选指标)"""
+        tpl = self._load_template(platform)
+        return {
+            "enabled": True,
+            "pinned": False,
+            "enabled_metrics": list(DEFAULT_ENABLED_METRICS[platform]),
+            "api_base_url": tpl.get("api_base_url", ""),
+            "api_base_url_international": tpl.get("api_base_url_international", ""),
+            "auth_header": tpl.get("auth_header", ""),
+            "auth_prefix": tpl.get("auth_prefix", ""),
+            "region": tpl.get("region", "domestic"),
+        }
 
     # ------------------------------------------------------------ 基础读写
+
+    def _load_settings(self) -> dict:
+        """读 settings.json;根不是 dict 视为损坏(备份后回落默认)"""
+        data = self._load_json(self._settings_path)
+        if data is None:
+            return self._default_settings()
+        if not isinstance(data, dict):
+            self._backup_corrupt(self._settings_path)
+            return self._default_settings()
+        return data
+
+    def _load_keys(self) -> dict:
+        """读 keys.json;根不是 dict 视为损坏(备份后回落空)"""
+        data = self._load_json(self._keys_path)
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            self._backup_corrupt(self._keys_path)
+            return {}
+        # 凭据值也要清毒:粘贴来的 key/cookie 里可能有截断的 emoji(代理字符),
+        # 一个坏字符会让这个文件的**所有**写盘都失败(连改别的账号都不行)
+        return {
+            _sanitize_text(k): _sanitize_text(v)
+            for k, v in data.items()
+            if isinstance(k, str) and isinstance(v, str)
+        }
+
+    @staticmethod
+    def _backup_corrupt(path: str) -> None:
+        """把异常配置复制一份 .corrupt 备份(留证据,原文件留在原位)。
+
+        用复制而不是移动:原文件还在(下次保存会覆盖它),证据留在 .corrupt 里——
+        移动会把磁盘上的配置直接弄没,应用下次启动就成空白了。
+        """
+        backup = path + ".corrupt"
+        try:
+            shutil.copy2(path, backup)
+            print(f"[QuotaBar] 配置文件异常,已备份到 {backup}", file=sys.stderr)
+        except OSError:
+            pass
 
     @staticmethod
     def _load_json(path: str):
@@ -75,33 +278,54 @@ class ConfigService:
         原配置永久丢失——所以必须先留备份。
         """
         try:
-            with open(path, encoding="utf-8") as f:
+            # utf-8-sig:带 BOM 的文件(记事本/部分同步客户端产物)也能读
+            with open(path, encoding="utf-8-sig") as f:
                 return json.load(f)
         except OSError:
             return None
-        except json.JSONDecodeError:
-            backup = path + ".corrupt"
-            try:
-                os.replace(path, backup)
-                print(f"[QuotaBar] 配置文件损坏,已备份到 {backup},使用默认配置", file=sys.stderr)
-            except OSError:
-                pass
+        except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
+            # UnicodeDecodeError:文件被非 UTF-8 的工具/同步客户端转过码,
+            # 与 JSON 损坏同等处理(备份 + 回落默认),不能直接崩在启动阶段
+            ConfigService._backup_corrupt(path)
             return None
 
     @staticmethod
     def _atomic_write(path: str, data) -> None:
-        """原子写:临时文件名带 pid+线程 id,防多进程/多线程同时写时互相截断"""
+        """原子写:临时文件名带 pid+线程 id,防多进程/多线程同时写时互相截断。
+
+        失败时清掉临时文件(不留垃圾),并把异常抛给调用方——调用方要能
+        告诉用户「没保存成功」,不能默默吞掉。
+        """
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
 
     def _save_settings(self) -> None:
-        self._atomic_write(self._settings_path, self._settings)
+        try:
+            self._atomic_write(self._settings_path, self._settings)
+        except Exception:
+            # 回滚到上次落盘成功的状态:内存新/磁盘旧会让界面显示"已保存",
+            # 重启后改动却消失
+            self._settings = copy.deepcopy(self._settings_snapshot)
+            raise
+        self._settings_snapshot = copy.deepcopy(self._settings)
 
     def _save_keys(self) -> None:
-        self._atomic_write(self._keys_path, self._keys)
+        try:
+            self._atomic_write(self._keys_path, self._keys)
+        except Exception:
+            self._keys = dict(self._keys_snapshot)
+            raise
+        self._keys_snapshot = dict(self._keys)
 
     @staticmethod
     def _default_settings() -> dict:
@@ -120,11 +344,11 @@ class ConfigService:
     def reload(self) -> None:
         """重新从磁盘加载(测试用)"""
         with self._lock:
-            self._settings = self._load_json(self._settings_path)
-            if self._settings is None:
-                self._settings = self._default_settings()
-            self._keys = self._load_json(self._keys_path) or {}
+            self._settings = self._load_settings()
+            self._keys = self._load_keys()
             self._normalize()
+            self._settings_snapshot = copy.deepcopy(self._settings)
+            self._keys_snapshot = dict(self._keys)
 
     # ------------------------------------------------------------ 账号实例注册表
 
@@ -180,9 +404,13 @@ class ConfigService:
         return platform.value
 
     def _load_template(self, platform: PlatformType) -> dict:
-        path = os.path.join(_resources_dir(), "ConfigTemplates", f"{self._template_name(platform)}.template.json")
+        """读平台模板;文件缺失/读不出来时用内置兜底值(打包漏带 Resources 的保险)"""
+        name = self._template_name(platform)
+        path = os.path.join(_resources_dir(), "ConfigTemplates", f"{name}.template.json")
         data = self._load_json(path)
-        return data or {}
+        if isinstance(data, dict) and data:
+            return data
+        return dict(_TEMPLATE_FALLBACK.get(name, {}))
 
     def add_instance(self, platform: PlatformType, display_name: Optional[str] = None) -> PlatformInstance:
         """添加账号实例:自动启用、按模板填充取数配置、默认勾选指标"""
@@ -195,17 +423,7 @@ class ConfigService:
             self._settings["instances"].append(
                 {"id": inst.id, "platform_type": platform.value, "display_name": inst.display_name}
             )
-            tpl = self._load_template(platform)
-            self._settings["per_instance"][inst.id] = {
-                "enabled": True,
-                "pinned": False,
-                "enabled_metrics": list(DEFAULT_ENABLED_METRICS[platform]),
-                "api_base_url": tpl.get("api_base_url", ""),
-                "api_base_url_international": tpl.get("api_base_url_international", ""),
-                "auth_header": tpl.get("auth_header", ""),
-                "auth_prefix": tpl.get("auth_prefix", ""),
-                "region": tpl.get("region", "domestic"),
-            }
+            self._settings["per_instance"][inst.id] = self._default_per_instance(platform)
             self._save_settings()
             return inst
 
@@ -214,16 +432,22 @@ class ConfigService:
         with self._lock:
             for it in self._settings["instances"]:
                 if it["id"] == instance_id:
-                    name = new_name.strip()
+                    name = _sanitize_text(new_name.strip())
                     it["display_name"] = name or PlatformType(it["platform_type"]).display_name()
                     self._save_settings()
                     return
         raise KeyError(f"实例不存在: {instance_id}")
 
     def delete_instance(self, instance_id: str) -> None:
-        """删除实例:清配置与凭据,写墓碑防 id 复用"""
+        """删除实例:清配置与凭据,写墓碑防 id 复用。
+
+        两步落盘(settings 与 keys)必须**要么都成、要么都不成**:
+        只删了一半的话,账号会变成「有账号没凭据」或「凭据残留在文件里」,
+        前后不一致。所以第二步失败时把第一步也回滚。
+        """
         with self._lock:
             before = len(self._settings["instances"])
+            snapshot = copy.deepcopy(self._settings)
             self._settings["instances"] = [it for it in self._settings["instances"] if it["id"] != instance_id]
             if len(self._settings["instances"]) == before:
                 raise KeyError(f"实例不存在: {instance_id}")
@@ -233,9 +457,32 @@ class ConfigService:
             if self._settings["globals"].get("active_instance_id") == instance_id:
                 remain = self._settings["instances"]
                 self._settings["globals"]["active_instance_id"] = remain[0]["id"] if remain else None
-            self._keys.pop(instance_id, None)
+            deleted = copy.deepcopy(self._settings)  # 删除后的状态(恢复失败时内存跟磁盘走)
+            # 先落盘账号注册表(失败时 _save_settings 自己回滚,凭据还没动)
             self._save_settings()
-            self._save_keys()
+            # 再删凭据:失败就把账号恢复回去,不留「删了一半」的错位状态
+            self._keys.pop(instance_id, None)
+            try:
+                self._save_keys()
+            except Exception:
+                # 恢复要绕开 _save_settings:它的失败分支会用**快照**覆盖内存,
+                # 而快照已经是「删除后」的状态——等于把刚恢复的账号又抹掉。
+                self._settings = snapshot
+                self._settings_snapshot = copy.deepcopy(snapshot)
+                try:
+                    self._atomic_write(self._settings_path, self._settings)
+                except Exception as e:
+                    # 连恢复都写不进去(磁盘满):磁盘上是「已删除」,内存必须跟着磁盘走,
+                    # 否则内存与磁盘分叉,重启后账号凭空消失。
+                    self._settings = deleted
+                    self._settings_snapshot = copy.deepcopy(deleted)
+                    # 账号真没了,凭据也别留在内存里:下次任意一次 keys 落盘会清掉它
+                    self._keys.pop(instance_id, None)
+                    print(
+                        f"[QuotaBar] 账号 {instance_id} 删除后恢复失败(磁盘可能是半删状态):{e}",
+                        file=sys.stderr,
+                    )
+                raise
 
     def reorder_instances(self, ordered_ids: list[str]) -> None:
         """按给定顺序重排账号(拖拽排序用)。未列出的账号保持在后面。"""
@@ -281,7 +528,8 @@ class ConfigService:
 
     def is_enabled(self, instance_id: str) -> bool:
         with self._lock:
-            return bool(self._state(instance_id).get("enabled", False))
+            st = self._settings["per_instance"].get(instance_id)
+            return bool(isinstance(st, dict) and st.get("enabled", False))
 
     def set_enabled(self, instance_id: str, enabled: bool) -> None:
         """禁用实例;禁止禁用最后一个启用实例;禁用时自动取消钉选"""
@@ -294,39 +542,60 @@ class ConfigService:
                     if self._settings["per_instance"].get(it["id"], {}).get("enabled")
                 ]
                 if instance_id in enabled_ids and len(enabled_ids) <= 1:
-                    raise ValueError("至少需要启用一个平台")
+                    raise ConfigRuleError("至少需要启用一个平台")
                 st["pinned"] = False
             st["enabled"] = enabled
             self._save_settings()
 
     def is_pinned(self, instance_id: str) -> bool:
         with self._lock:
-            return bool(self._state(instance_id).get("pinned", False))
+            st = self._settings["per_instance"].get(instance_id)
+            return bool(isinstance(st, dict) and st.get("pinned", False))
 
     def set_pinned(self, instance_id: str, pinned: bool) -> None:
         with self._lock:
             st = self._state(instance_id)
             if pinned and not st.get("enabled"):
-                raise ValueError("未启用的实例不可钉选")
+                raise ConfigRuleError("未启用的实例不可钉选")
             st["pinned"] = pinned
             self._save_settings()
 
     def enabled_metrics(self, instance_id: str) -> list[str]:
+        """勾选的指标:死 label 过滤;全被过滤掉时回退平台默认勾选
+
+        回退与 macOS 版一致(落盘值全空/全死 → 用平台默认),否则会出现
+        「面板显示前 2 个指标、菜单里一个都没勾」的错位状态。
+        """
         with self._lock:
             inst = self._find_instance(instance_id)
-            allowed = AVAILABLE_METRIC_LABELS[PlatformType(inst["platform_type"])]
-            raw = self._state(instance_id).get("enabled_metrics") or []
+            platform = PlatformType(inst["platform_type"])
+            allowed = AVAILABLE_METRIC_LABELS[platform]
+            raw = self._state(instance_id).get("enabled_metrics")
+            if not isinstance(raw, (list, tuple)):
+                return list(DEFAULT_ENABLED_METRICS[platform])  # 落盘值不是列表:当作没勾
             # 死 label 过滤:老配置里已下架的 label 不占勾选名额
-            return [m for m in raw if m in allowed]
+            picked = [m for m in raw if m in allowed]
+            # 超过 2 个(手改坏了)也要回落默认:菜单会显示 3 个全勾、面板只显示前 2 个
+            if not picked or len(picked) > 2:
+                return list(DEFAULT_ENABLED_METRICS[platform])
+            return picked
 
     def set_enabled_metrics(self, instance_id: str, labels: list[str]) -> None:
-        """勾选指标:必须 1~2 个、都在该平台清单内"""
+        """勾选指标:必须 1~2 个、都在该平台清单内
+
+        顺序与 macOS 版一致:**先按原始名单查数**(3 个一律拒),再过滤死 label。
+        反过来做的话,「3 个里混 1 个死 label」会被悄悄缩成 2 个而通过。
+        """
         with self._lock:
             inst = self._find_instance(instance_id)
             allowed = AVAILABLE_METRIC_LABELS[PlatformType(inst["platform_type"])]
+            if len(labels) > 2:
+                raise ConfigRuleError("每账号最多勾选 2 个指标")
+            if not labels:
+                raise ConfigRuleError("每账号至少勾选 1 个指标")
             cleaned = [l for l in labels if l in allowed]
-            if not 1 <= len(cleaned) <= 2:
-                raise ValueError("每账号最多勾选 2 个指标")
+            if not cleaned:
+                raise ConfigRuleError("勾选的指标已全部下架")
             self._state(instance_id)["enabled_metrics"] = cleaned
             self._save_settings()
 
@@ -337,15 +606,25 @@ class ConfigService:
             return self._keys.get(instance_id, "")
 
     def set_api_key(self, instance_id: str, key: str) -> None:
-        """写入凭据;空串等于清除"""
+        """写入凭据;空串等于清除。
+
+        写盘失败时由 _save_keys 回滚内存值(旧值恢复),异常继续抛给调用方——
+        界面必须能告诉用户「没保存成功」,否则重启后凭据凭空消失。
+        """
         with self._lock:
-            if key:
-                self._keys[instance_id] = key
+            clean = _sanitize_text(key)
+            if clean:
+                self._keys[instance_id] = clean
             else:
                 self._keys.pop(instance_id, None)
             self._save_keys()
 
     def is_configured(self, instance_id: str) -> bool:
+        """是否已配置好可取数:有凭据 + 有取数端点。
+
+        端点由模板(或内置兜底)填充,正常情况下恒非空;真为空说明平台模板缺失,
+        此时判未配置比发一个必然失败的请求更安全。
+        """
         with self._lock:
             st = self._settings["per_instance"].get(instance_id)
             return bool(st and st.get("api_base_url") and self._keys.get(instance_id))
@@ -391,8 +670,14 @@ class ConfigService:
             self._save_settings()
 
     def locale(self) -> str:
+        """界面语言:只认 en / zh-Hans,其它值回落默认。
+
+        类型也要校验:locale 被写成 list/dict 时,拿它当字典键查 i18n 表会抛
+        TypeError(不可哈希),第一次出菜单就崩——整个界面没有可用语言。
+        """
         with self._lock:
-            return self._settings["globals"].get("locale", "zh-Hans")
+            value = self._settings["globals"].get("locale", "zh-Hans")
+            return value if isinstance(value, str) and value in ("en", "zh-Hans") else "zh-Hans"
 
     def set_locale(self, locale: str) -> None:
         with self._lock:
@@ -435,6 +720,18 @@ class ConfigService:
             self._settings["globals"]["tray_icon_enabled"] = enabled
             self._save_settings()
 
+    def set_entry_visibility(self, overlay: bool, tray: bool) -> None:
+        """一次性设置「任务栏面板」与「托盘图标」两个入口开关(单次落盘)。
+
+        两个开关必须**同时**改、一次写盘:分两次写的话,第二步失败会留下
+        「面板关 + 托盘关」的落盘状态——重启后进程还在,却没有任何 UI 入口,
+        用户只能去任务管理器杀进程(这正是这个不变式要防的事)。
+        """
+        with self._lock:
+            self._settings["globals"]["overlay_enabled"] = overlay
+            self._settings["globals"]["tray_icon_enabled"] = tray
+            self._save_settings()
+
     # ------------------------------------------------------------ 任务栏数字面板(overlay)
 
     def overlay_enabled(self) -> bool:
@@ -452,7 +749,10 @@ class ConfigService:
         with self._lock:
             pos = self._settings["globals"].get("overlay_pos")
             if isinstance(pos, list) and len(pos) == 2:
-                return int(pos[0]), int(pos[1])
+                try:
+                    return int(pos[0]), int(pos[1])
+                except (TypeError, ValueError):
+                    return None  # 手改成字符串/NaN:当作没记过位置
             return None
 
     def set_overlay_pos(self, pos: tuple[int, int]) -> None:

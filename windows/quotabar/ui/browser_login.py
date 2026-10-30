@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -104,7 +105,12 @@ class BrowserLoginSession:
         return None
 
     def close(self) -> None:
-        """关掉临时浏览器实例并清理用户目录"""
+        """关掉临时浏览器实例并清理用户目录
+
+        清理要等浏览器**真的退出**再删目录:Windows 上 TerminateProcess 是异步的,
+        进程垂死时 profile 里的文件还锁着,rmtree 会静默失败——目录(含已登录会话:
+        Oasis-Token 30 天 refresh JWT / tr_session 30 天)就留在 %TEMP% 里了。
+        """
         if self._process is not None:
             try:
                 self._process.terminate()
@@ -112,13 +118,25 @@ class BrowserLoginSession:
                     self._process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     self._process.kill()
+                    self._process.wait(timeout=5)  # 等进程真正结束,否则文件还锁着
             except Exception:
                 pass
             self._process = None
-        try:
-            shutil.rmtree(self._profile_dir, ignore_errors=True)
-        except Exception:
-            pass
+        # 文件锁可能刚放开,重试几次再放弃
+        for _ in range(3):
+            try:
+                shutil.rmtree(self._profile_dir, ignore_errors=False)
+                return
+            except FileNotFoundError:
+                return
+            except OSError:
+                time.sleep(0.3)
+        # 删不掉就记一笔:目录里留着已登录的会话凭据,用户该知道
+        if os.path.isdir(self._profile_dir):
+            print(
+                f"[QuotaBar] 浏览器临时目录未能清理(可能仍被浏览器占用):{self._profile_dir}",
+                file=sys.stderr,
+            )
 
     # ------------------------------------------------------------ 取 cookie
 

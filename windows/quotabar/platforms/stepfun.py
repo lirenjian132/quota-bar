@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 
 from ..models import (
@@ -28,7 +29,7 @@ from ..models import (
     UsageMetric,
 )
 from ..net import NetworkFunc, Request, Response
-from ._base import ServiceCache, parse_json, send
+from ._base import ServiceCache, parse_json, send, to_float
 
 CACHE_TTL = 300.0  # 秒;非公开接口,刻意放缓(与 macOS 版一致)
 OASIS_APPID = "10300"
@@ -104,6 +105,8 @@ class StepFunPlatformService:
                 body="{}",
             ),
             body_in_error=True,
+            # Stepfun 的 403 = cookie 过期/被顶/风控拒绝,和 401 一样是凭据问题
+            forbid_as_unauthorized=True,
         )
 
     def _fetch_rate_limit(self, config, network, headers) -> list[UsageMetric]:
@@ -114,14 +117,20 @@ class StepFunPlatformService:
         if status != 1:
             raise PlatformError(ErrorKind.API, body.get("desc") or f"status {status}")
 
-        rate = (body.get("plan_credit_rate_limit") or {})
+        rate = body.get("plan_credit_rate_limit")
+        if not isinstance(rate, dict):
+            rate = {}
         credit_left = rate.get("subscription_credit_left_rate")
         if credit_left is not None:
             # credit 套餐族:单指标 credits
+            value = to_float(credit_left)
+            if value is None or not math.isfinite(value * 100):
+                # 乘 100 之后仍要有限:1e308 * 100 = inf,会一路炸到渲染层
+                raise PlatformError(ErrorKind.INVALID_RESPONSE)
             return [
                 UsageMetric(
                     label=LABEL_CREDITS,
-                    current_value=float(credit_left) * 100,
+                    current_value=value * 100,
                     total_value=100,
                     unit="%",
                     reset_time=_sane_unix_seconds(
@@ -135,16 +144,20 @@ class StepFunPlatformService:
             ("five_hour_usage_left_rate", LABEL_FIVE_HOUR),
             ("weekly_usage_left_rate", LABEL_WEEKLY_LIMIT),
         ):
-            value = body.get(key)
-            if value is not None:
-                metrics.append(
-                    UsageMetric(
-                        label=label,
-                        current_value=float(value) * 100,
-                        total_value=100,
-                        unit="%",
-                    )
+            raw = body.get(key)
+            if raw is None:
+                continue
+            value = to_float(raw)
+            if value is None or not math.isfinite(value * 100):
+                continue  # 类型不对或乘 100 后溢出:整条跳过,不谎报
+            metrics.append(
+                UsageMetric(
+                    label=label,
+                    current_value=value * 100,
+                    total_value=100,
+                    unit="%",
                 )
+            )
         if not metrics:
             raise PlatformError(ErrorKind.INVALID_RESPONSE)
         return metrics
@@ -169,12 +182,18 @@ class StepFunPlatformService:
 
 
 def _sane_unix_seconds(value) -> float | None:
-    """Unix 秒时间戳:兼容字符串/数字双形态,并过滤不合理区间"""
+    """Unix 秒时间戳:兼容字符串/数字双形态,并过滤不合理区间。
+
+    macOS 版对**重置时间**也做了同样的区间过滤,但 `expired_at` 那条路径没有
+    (StepFunPlatformService.swift:134-135)。所以真实差异是:
+    expired_at 是个很小的垃圾值(如 0)时,macOS 判「已过期」标红,
+    Windows 过滤掉判「未到期」。这里**有意更保守**(不拿明显非法的值判失效),
+    别当成 bug 回改。
+    """
     if value is None:
         return None
-    try:
-        ts = float(value)
-    except (TypeError, ValueError):
+    ts = to_float(value)
+    if ts is None:
         return None
     if not (TS_SANITY_MIN < ts < TS_SANITY_MAX):
         return None

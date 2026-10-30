@@ -40,12 +40,19 @@ class I18n:
         return self._locale
 
     def set_locale(self, locale: str) -> None:
+        """切换语言:只认已知语言,其它值回落默认。
+
+        非法值(list/dict 之类)会让下面查表时抛 TypeError(不可哈希)——
+        整个界面一份文案都取不出来。
+        """
         with self._lock:
-            self._locale = locale
+            self._locale = locale if isinstance(locale, str) and locale in self._tables else LOCALE_ZH
 
     def t(self, key: str, *args) -> str:
         """按当前语言取文案;按出现顺序用 args 填充 %@ / %d 占位符"""
-        table = self._tables.get(self._locale) or {}
+        table = {}
+        if isinstance(self._locale, str):
+            table = self._tables.get(self._locale) or {}
         s = table.get(key) or self._tables.get(LOCALE_EN, {}).get(key) or key
         if not args:
             return s

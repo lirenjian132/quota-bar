@@ -152,3 +152,13 @@ def test_ms_timestamp_rejected_by_sanity_window(tmp_path):
                     }),
                     status_payload())
     assert data.metrics[0].reset_time is None
+
+
+def test_webid_extraction_is_case_insensitive_upper():
+    """cookie 名字大小写不敏感:大写 OASIS-WEBID 也要能拆出来"""
+    from quotabar.platforms.stepfun import StepFunPlatformService
+
+    svc = StepFunPlatformService()
+    assert svc.extract_webid("OASIS-WEBID=abc123") == "abc123"
+    assert svc.extract_webid("Oasis-Webid=abc123") == "abc123"
+    assert svc.extract_webid("foo=1; oasis-webid=xyz; bar=2") == "xyz"

@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -81,6 +82,8 @@ class DetailWindow(QDialog):
         self._config_instance_id: Optional[str] = None
         # 配置面板输入(整体重建时保留,语言切换不丢用户已输内容)
         self._api_key_text = ""
+        # 配置面板的「保存」按钮:输入框内容变化时同步启用/禁用
+        self._save_button: Optional[QPushButton] = None
         self.setWindowTitle(self._i18n.t("app.name"))
         # 置顶:普通窗口会被置顶应用(如 ZCode)盖住
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
@@ -92,6 +95,10 @@ class DetailWindow(QDialog):
         self._build_ui()
 
     # ------------------------------------------------------------ 公开接口
+
+    def is_configuring(self) -> bool:
+        """当前是否停在配置面板"""
+        return self._mode == "config"
 
     def reload(self) -> None:
         """数据/配置/语言变化后整体重建(保留配置面板的已输内容)。
@@ -142,6 +149,7 @@ class DetailWindow(QDialog):
     def _build_ui(self) -> None:
         """按当前视图模式重建整窗内容(配置面板输入已存成员变量,不丢)"""
         _clear_layout(self._root)
+        self._save_button = None
         if self._mode == "config":
             self._build_config_view()
         else:
@@ -177,13 +185,18 @@ class DetailWindow(QDialog):
     # ------------------------------------------------------------ 账号切换区
 
     def _build_account_switcher(self) -> QWidget:
-        """账号切换区:标签可**拖拽排序**(按住标签拖到另一个标签上松手即交换顺序)。"""
+        """账号切换区:标签可**拖拽排序**(按住标签拖到另一个标签上松手即交换顺序)。
+
+        只列启用中的账号(与 macOS 弹窗一致)。
+        """
         self._reorder_area = _ReorderArea(self)
         self._reorder_area.reorder_requested.connect(self._reorder)
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         active_id = self._config.active_instance_id()
         for inst in self._config.instances():
+            if not self._config.is_enabled(inst.id):
+                continue
             btn = _ReorderButton(inst.id, inst.display_name)
             btn.setCheckable(True)
             btn.setChecked(inst.id == active_id)
@@ -200,11 +213,21 @@ class DetailWindow(QDialog):
             return
         ids.remove(source_id)
         ids.insert(ids.index(target_id), source_id)
-        self._config.reorder_instances(ids)
+        with self._tray._config_write() as st:
+            self._config.reorder_instances(ids)
+        if not st.ok:
+            return  # 落盘失败:配置已回滚,界面保持原序
         self._build_ui()
+        # 通知托盘:面板账号块与 tooltip 的顺序也要跟着变(否则要等下个刷新周期)
+        self._tray._on_config_changed()
 
     def _switch_account(self, instance_id: str) -> None:
-        self._config.set_active_instance_id(instance_id)
+        with self._tray._config_write() as st:
+            self._config.set_active_instance_id(instance_id)
+        if not st.ok:
+            # 落盘失败:激活账号没改,但按钮已被点击置成勾选态——重建回原状
+            self._build_ui()
+            return
         # 新激活账号还没有数据时立刻后台拉一次,避免长时间显示空态
         if self._config.is_configured(instance_id) and self._tray.data(instance_id) is None:
             self._tray.fetch_instance_async(instance_id)
@@ -280,8 +303,10 @@ class DetailWindow(QDialog):
         """指标卡:全量展示,不过滤(对齐 macOS 弹窗口径)"""
         for metric in data.metrics:
             layout.addWidget(self._build_metric_card(metric))
-        # 健康行:取数报错也按异常显示
-        healthy = data.is_healthy and error is None
+        # 健康行只按数据本身的健康度判定(对齐 macOS 弹窗与任务栏面板口径):
+        # 「最近一次刷新失败」是另一回事,由下面的橙色陈旧提示单独表达,
+        # 混进健康行会让面板显示绿点、详情窗却写"状态异常",两边自相矛盾。
+        healthy = data.is_healthy
         text = self._i18n.t("popover.normal") if healthy else self._i18n.t("popover.low")
         health = QLabel(text)
         health.setStyleSheet(f"color: {_COLOR_GREEN if healthy else _COLOR_RED}; font-weight: bold;")
@@ -322,10 +347,16 @@ class DetailWindow(QDialog):
         return card
 
     def _metric_value_text(self, metric: UsageMetric) -> str:
-        """指标数值:一律调 render.*;无限套餐与状态栏同口径显示 ∞"""
+        """指标数值:一律调 render.*;无限套餐与状态栏同口径显示 ∞
+
+        百分比型与次数型带「剩余: 」前缀(对齐 macOS 弹窗);余额型无 total,不加前缀。
+        """
         if metric.unit == "unlimited" or metric.label == LABEL_WEEKLY_UNLIMITED:
             return render.tray_text(metric, self._config.display_mode())
-        return render.metric_detail_text(metric, self._i18n.locale)
+        text = render.metric_detail_text(metric, self._i18n.locale)
+        if metric.unit == "%" or (metric.total_value is not None and metric.total_value > 0):
+            return f"{self._i18n.t('popover.remaining')}: {text}"
+        return text
 
     def _reset_countdown_text(self, metric: UsageMetric) -> str:
         """重置/到期倒计时:kind 由 render.reset_countdown 判定,文案走 i18n"""
@@ -462,6 +493,8 @@ class DetailWindow(QDialog):
         buttons.addWidget(save)
         buttons.addStretch(1)
         self._root.addLayout(buttons)
+        # 记住保存按钮:输入框清空后要同步禁用,否则点了没反应又没有任何提示
+        self._save_button = save
 
     def _open_login(self, platform: PlatformType) -> None:
         """打开系统浏览器登录,登录完成后把凭据填进配置框。
@@ -471,6 +504,7 @@ class DetailWindow(QDialog):
         """
         from .browser_login import BrowserLoginSession, find_browser
 
+        i18n = self._i18n
         if find_browser() is None:
             # 没有可用的系统浏览器:提示手动粘贴 cookie
             QMessageBox.warning(
@@ -490,15 +524,29 @@ class DetailWindow(QDialog):
             )
             return
 
-        dlg = _WaitLoginDialog(self)
+        dlg = _WaitLoginDialog(self, platform.display_name())
+        accepted = False
+        credential = None
         try:
-            dlg.exec_()   # 用户在浏览器里登录完,回这里点「完成并提取」
-            credential = session.credential()
+            # 用户在浏览器里登录完,回这里点「完成并提取」
+            accepted = dlg.exec_() == QDialog.Accepted
+            # 只有点「完成并提取」才提取:点了「取消」还去收割 cookie 是越界
+            if accepted:
+                credential = session.credential()
         finally:
             session.close()
+        if not accepted:
+            return
         if credential:
             self._api_key_text = credential
             self._build_ui()
+        else:
+            # 没登录 / CDP 拿不到:必须说一声,否则用户以为按钮坏了
+            QMessageBox.warning(
+                self,
+                i18n.t("login.missing.title"),
+                i18n.t("login.missing.message"),
+            )
 
     def _open_config(self, instance_id: Optional[str]) -> None:
         if not instance_id:
@@ -510,25 +558,60 @@ class DetailWindow(QDialog):
 
     def _on_api_key_changed(self, text: str) -> None:
         self._api_key_text = text
+        if self._save_button is not None:
+            self._save_button.setEnabled(bool(text.strip()))
 
     def _cancel_config(self) -> None:
+        instance_id = self._config_instance_id
         self._mode = "main"
         self._config_instance_id = None
         self._api_key_text = ""
         self._build_ui()
+        if instance_id:
+            # 新建账号在配置前取消 → 交给托盘回收空壳账号(对齐 macOS)
+            self._tray._on_config_cancelled(instance_id)
 
     def _save_config(self) -> None:
         instance_id = self._config_instance_id
         key = self._api_key_text.strip()
         if not instance_id or not key:
             return
-        self._config.set_api_key(instance_id, key)
+        if self._config.instance(instance_id) is None:
+            # 配置面板开着时账号被删了:别给已删的 id 写凭据(会留下孤儿凭据)
+            self._mode = "main"
+            self._config_instance_id = None
+            self._api_key_text = ""
+            self._build_ui()
+            return
+        try:
+            self._config.set_api_key(instance_id, key)
+        except (OSError, TypeError, UnicodeEncodeError) as e:
+            # 落盘失败:凭据没存上,必须告诉用户,否则重启后凭据凭空消失
+            # (UnicodeEncodeError 是 ValueError 子类:剪贴板里截断的 emoji 会带代理字符)
+            QMessageBox.warning(
+                self,
+                self._i18n.t("app.name"),
+                self._i18n.t("error.saveFailed", str(e)),
+            )
+            return
+        self._tray._on_config_saved(instance_id)
         # 换 key 后立刻清该实例缓存并后台拉取(不清则旧账号数据还会残留一个缓存窗口)
         self._tray.refresh_instance(instance_id)
         self._mode = "main"
         self._config_instance_id = None
         self._api_key_text = ""
         self._build_ui()
+
+    def reject(self) -> None:
+        """ESC / 点 X 关窗:配置模式下等价于「取消」
+
+        不接管的话,ESC 走 QDialog 默认 reject,配置面板里的输入被丢掉,
+        新建的空壳账号也不会被回收(菜单里留下幽灵账号)。
+        """
+        if self._mode == "config":
+            self._cancel_config()
+            return
+        super().reject()
 
 
 class _ReorderButton(QPushButton):
@@ -584,10 +667,10 @@ class _ReorderArea(QWidget):
 class _WaitLoginDialog(QDialog):
     """提示用户:浏览器已打开,登录完点「完成并提取」"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, platform_name: str = ""):
         super().__init__(parent)
         i18n = get_i18n()
-        self.setWindowTitle(i18n.t("login.title", ""))
+        self.setWindowTitle(i18n.t("login.title", platform_name))
         self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)

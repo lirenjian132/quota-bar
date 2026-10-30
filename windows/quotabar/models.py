@@ -98,7 +98,8 @@ class PlatformError(Exception):
 
     def __init__(self, kind: ErrorKind, message: str = ""):
         self.kind = kind
-        self.message = message or kind.value
+        # 消息一律转 str:上层会拿它当 i18n 键查表,非字符串(dict/list)会抛 TypeError
+        self.message = str(message) if message else kind.value
         super().__init__(f"[{kind.value}] {message}")
 
 

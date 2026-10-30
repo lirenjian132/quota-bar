@@ -34,3 +34,19 @@ def test_more_placeholders_than_args_safe(i18n):
     # 参数不足时剩余占位符原样保留,不抛错
     out = i18n.t("daily.reset.remaining", 2)
     assert "2" in out
+
+
+def test_percent_escape(i18n):
+    """%% 是字面量 %,不该被当成占位符吃掉"""
+    i18n.set_locale(LOCALE_ZH)
+    table = i18n._tables
+    table.setdefault(LOCALE_ZH, {})["test.percent"] = "进度 %d 完成%%"
+    assert i18n.t("test.percent", 2) == "进度 2 完成%"
+
+
+def test_locale_with_illegal_value_falls_back(i18n):
+    """语言值非法(list/dict)时回落默认,不能拿它当字典键去查表"""
+    i18n.set_locale(LOCALE_EN)
+    i18n.set_locale(["zh-Hans"])  # 类型不对
+    assert i18n.locale == LOCALE_ZH
+    assert i18n.t("menu.refreshNow") == "立即刷新"

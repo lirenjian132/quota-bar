@@ -44,6 +44,24 @@ def taskbar_top_edge(screen_geo) -> Optional[int]:
     return None
 
 
+def is_taskbar_visible() -> bool:
+    """任务栏窗口当前是否可见。
+
+    自动隐藏时任务栏不可见,此时屏幕像素采到的不是任务栏颜色(可能是桌面或
+    全屏应用),拿它当底色会让面板颜色乱跳——调用方要据此跳过重采样。
+    """
+    try:
+        user32 = ctypes.windll.user32
+        user32.FindWindowW.restype = ctypes.c_void_p
+        user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+        hwnd = user32.FindWindowW("Shell_TrayWnd", None)
+        if not hwnd:
+            return False
+        return bool(user32.IsWindowVisible(ctypes.c_void_p(hwnd)))
+    except Exception:
+        return False
+
+
 def get_taskbar_bg_color(default=(74, 79, 92)) -> tuple[int, int, int]:
     """取任务栏实际显示色。
 
@@ -60,54 +78,26 @@ def get_taskbar_bg_color(default=(74, 79, 92)) -> tuple[int, int, int]:
         hdc = user32.GetDC(None)  # 屏幕 DC:含亚克力合成后的最终颜色
         if not hdc:
             return default
-        y = (rect.top + rect.bottom) // 2
-        width = rect.right - rect.left
-        samples: dict[tuple[int, int, int], int] = {}
-        for i in range(16):
-            # 任务栏中段偏右的空白区(用户的固定图标集中在左段)
-            x = rect.left + int(width * (0.52 + 0.012 * i))
-            color = gdi32.GetPixel(hdc, x, y)
-            if color == 0xFFFFFFFF:
-                continue
-            rgb = (color & 0xFF, (color >> 8) & 0xFF, (color >> 16) & 0xFF)
-            samples[rgb] = samples.get(rgb, 0) + 1
-        user32.ReleaseDC(None, hdc)
+        try:
+            y = (rect.top + rect.bottom) // 2
+            width = rect.right - rect.left
+            samples: dict[tuple[int, int, int], int] = {}
+            for i in range(16):
+                # 任务栏中段偏右的空白区(用户的固定图标集中在左段)
+                x = rect.left + int(width * (0.52 + 0.012 * i))
+                color = gdi32.GetPixel(hdc, x, y)
+                if color == 0xFFFFFFFF:
+                    continue
+                rgb = (color & 0xFF, (color >> 8) & 0xFF, (color >> 16) & 0xFF)
+                samples[rgb] = samples.get(rgb, 0) + 1
+        finally:
+            # 必须成对释放:采样过程中抛异常会泄漏屏幕 DC(句柄耗尽后取色全黑)
+            user32.ReleaseDC(None, hdc)
         if not samples:
             return default
         return max(samples.items(), key=lambda kv: kv[1])[0]
     except Exception:
         return default
-
-
-def set_window_region(hwnd, rects: list[tuple[int, int, int, int]], radius: int = 12) -> bool:
-    """用圆角矩形区域裁剪窗口。
-
-    嵌入任务栏的窗口不能靠 alpha 透明(child window 不支持 layered),
-    但可以把窗口区域挖成几个圆角小块——镂空处直接露出任务栏背景,
-    视觉上就是几个独立的小图标块,而不是一块异色矩形。
-    """
-    try:
-        gdi32 = ctypes.windll.gdi32
-        user32 = ctypes.windll.user32
-        gdi32.CreateRectRgn.restype = ctypes.c_void_p
-        gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
-        gdi32.CombineRgn.restype = ctypes.c_void_p
-        gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
-        user32.SetWindowRgn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool]
-
-        RGN_OR = 2
-        region = gdi32.CreateRectRgn(0, 0, 0, 0)
-        for x, y, w, h in rects:
-            piece = gdi32.CreateRoundRectRgn(x, y, x + w, y + h, radius, radius)
-            merged = gdi32.CombineRgn(region, piece, RGN_OR)
-            gdi32.DeleteObject(region)
-            gdi32.DeleteObject(piece)
-            region = merged
-        ok = user32.SetWindowRgn(ctypes.c_void_p(hwnd), ctypes.c_void_p(region), True)
-        # SetWindowRgn 成功后区域归系统所有,不能再删
-        return bool(ok)
-    except Exception:
-        return False
 
 
 def embed_in_taskbar(hwnd) -> Optional[int]:
@@ -151,23 +141,38 @@ def embed_in_taskbar(hwnd) -> Optional[int]:
         WS_EX_TOOLWINDOW = 0x00000080
         WS_EX_TRANSPARENT = 0x00000020
         SW_HIDE = 0
+        SW_SHOW = 5
         SWP_NOMOVE, SWP_NOSIZE = 0x0002, 0x0001
         SWP_NOZORDER, SWP_NOACTIVATE = 0x0004, 0x0010
         SWP_FRAMECHANGED, SWP_SHOWWINDOW = 0x0020, 0x0040
 
         user32.ShowWindow(ctypes.c_void_p(hwnd), SW_HIDE)
 
-        style = user32.GetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_STYLE) & 0xFFFFFFFF
-        style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU)
+        orig_style = user32.GetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_STYLE) & 0xFFFFFFFF
+        orig_ex = user32.GetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_EXSTYLE) & 0xFFFFFFFF
+        style = orig_style & ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU)
         style |= WS_CHILD
         user32.SetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_STYLE, style)
 
-        ex = user32.GetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_EXSTYLE) & 0xFFFFFFFF
-        ex |= WS_EX_TOOLWINDOW      # 不进 Alt+Tab / 任务栏按钮
-        ex &= ~WS_EX_TRANSPARENT    # 有这个就全穿透,鼠标永远到不了
+        ex = orig_ex | WS_EX_TOOLWINDOW      # 不进 Alt+Tab / 任务栏按钮
+        ex &= ~WS_EX_TRANSPARENT            # 有这个就全穿透,鼠标永远到不了
         user32.SetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_EXSTYLE, ex)
 
+        # SetParent 成功时返回的是**旧父窗口**(顶层窗口是 NULL),返回值分不清
+        # 成功失败——只能看 GetLastError。
+        user32.SetParent.use_last_error = True
+        ctypes.set_last_error(0)
         user32.SetParent(ctypes.c_void_p(hwnd), ctypes.c_void_p(taskbar))
+        if ctypes.get_last_error() != 0:
+            # 嵌入失败(explorer 恰好重启):回滚样式。
+            # 不回滚的话窗口会变成「没有父窗口的 WS_CHILD」——既画不出来也收不到
+            # 鼠标,等于彻底消失,只能重启进程。
+            user32.SetParent(ctypes.c_void_p(hwnd), None)
+            user32.SetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_STYLE, orig_style)
+            user32.SetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_EXSTYLE, orig_ex)
+            user32.ShowWindow(ctypes.c_void_p(hwnd), SW_SHOW)
+            return None
+
         user32.SetWindowPos(
             ctypes.c_void_p(hwnd), None, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
@@ -359,85 +364,3 @@ def ensure_topmost(hwnd) -> bool:
     except Exception:
         return False
 
-
-def is_covered_by_taskbar(hwnd, ignore_hwnds=(), exclude_pid=None) -> bool:
-    """面板是否被更上层的窗口压在下面。
-
-    判据:沿 Z 序向前找第一个与本窗口矩形相交、且不是自身的可见顶层窗口。
-    任务栏(Shell_TrayWnd)与置顶应用(如 ZCode)都会命中。
-    只在真正被盖时才需要重新置顶——无条件 SetWindowPos 会让透明窗口闪烁。
-    """
-    try:
-        user32 = ctypes.windll.user32
-        user32.GetWindow.argtypes = [ctypes.c_void_p, ctypes.c_uint]
-        user32.GetWindow.restype = ctypes.c_void_p
-        user32.GetWindowRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(RECT)]
-        user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
-        GW_HWNDPREV = 3
-
-        mine = RECT()
-        if not user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(mine)):
-            return False
-
-        ignore = {int(x) for x in ignore_hwnds if x}
-        pid_self = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(pid_self))
-        prev = user32.GetWindow(ctypes.c_void_p(hwnd), GW_HWNDPREV)
-        checked = 0
-        while prev and checked < 64:
-            # 不可见窗口不占预算(输入法/工具提示等能吃掉十几个名额)
-            if not user32.IsWindowVisible(ctypes.c_void_p(prev)):
-                prev = user32.GetWindow(ctypes.c_void_p(prev), GW_HWNDPREV)
-                continue
-            checked += 1
-            if exclude_pid is not None:
-                # 同进程窗口(自家浮窗/详情窗)不算遮挡者,否则互相抢 Z 序
-                pid_other = wintypes.DWORD()
-                user32.GetWindowThreadProcessId(ctypes.c_void_p(prev), ctypes.byref(pid_other))
-                if pid_other.value == exclude_pid:
-                    prev = user32.GetWindow(ctypes.c_void_p(prev), GW_HWNDPREV)
-                    continue
-            if prev != hwnd and int(prev) not in ignore:
-                r = RECT()
-                if user32.GetWindowRect(ctypes.c_void_p(prev), ctypes.byref(r)):
-                    # 矩形相交 → 这个窗口盖在我们上面
-                    if r.left < mine.right and r.right > mine.left and r.top < mine.bottom and r.bottom > mine.top:
-                        return True
-            prev = user32.GetWindow(ctypes.c_void_p(prev), GW_HWNDPREV)
-    except Exception:
-        return False
-    return False
-
-
-def set_hit_region(hwnd, width: int, height: int) -> bool:
-    """给窗口设置命中区域(整个矩形)。
-
-    为什么需要:alpha 透明窗口(WS_EX_LAYERED + UpdateLayeredWindow)的鼠标命中
-    测试**按像素 alpha 判定**——alpha=0 的点会直接穿透到下层窗口。
-    我们的面板背景是全透明的(只有文字可见),鼠标停在文字旁的空隙时事件
-    就被下面的置顶应用(如 ZCode)抢走,hover/点击永远不生效。
-    设置 window region 后,命中只按 region 判定,整个面板都能接收鼠标。
-    """
-    try:
-        gdi32 = ctypes.windll.gdi32
-        user32 = ctypes.windll.user32
-        gdi32.CreateRectRgn.restype = ctypes.c_void_p
-        user32.SetWindowRgn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool]
-        region = gdi32.CreateRectRgn(0, 0, max(1, width), max(1, height))
-        ok = user32.SetWindowRgn(ctypes.c_void_p(hwnd), ctypes.c_void_p(region), True)
-        return bool(ok)
-    except Exception:
-        return False
-
-
-def show_window(hwnd) -> bool:
-    """强制显示窗口(SW_SHOW)。Qt 的 show() 在 translucent 窗口上偶尔不生效。"""
-    try:
-        user32 = ctypes.windll.user32
-        user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        user32.ShowWindow.restype = ctypes.c_bool
-        SW_SHOW = 5
-        user32.ShowWindow(ctypes.c_void_p(hwnd), SW_SHOW)
-        return bool(user32.IsWindowVisible(ctypes.c_void_p(hwnd)))
-    except Exception:
-        return False

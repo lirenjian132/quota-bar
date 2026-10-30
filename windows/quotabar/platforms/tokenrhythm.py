@@ -26,7 +26,7 @@ from ..models import (
     UsageMetric,
 )
 from ..net import NetworkFunc, Request
-from ._base import ServiceCache, parse_json, send
+from ._base import ServiceCache, parse_json, send, to_float
 
 CACHE_TTL = 300.0  # 秒;中转站接口,刻意放缓防风控(与 macOS 版一致)
 
@@ -90,12 +90,14 @@ class TokenRhythmPlatformService:
         if body.get("code") not in (0, "0", None):
             msg = body.get("message") or f"code {body.get('code')}"
             raise PlatformError(ErrorKind.API, str(msg))
-        data = body.get("data") or {}
+        data = body.get("data")
+        if not isinstance(data, dict):
+            raise PlatformError(ErrorKind.INVALID_RESPONSE)
         raw = data.get("availableBalanceCny")
-        try:
-            balance = float(raw)
-        except (TypeError, ValueError) as e:
-            raise PlatformError(ErrorKind.INVALID_RESPONSE) from e
+        balance = to_float(raw)
+        if balance is None:
+            # 转不动(含 "nan"/"inf" 这类非法余额):报响应无效,别把 nan 当余额显示
+            raise PlatformError(ErrorKind.INVALID_RESPONSE)
         # 主响应里若直接带到期信息则顺带取(当前没有,留给辅端点)
         return balance, None
 

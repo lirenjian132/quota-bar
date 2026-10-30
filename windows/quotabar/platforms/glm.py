@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import math
+
 from ..models import (
     LABEL_FIVE_HOUR,
     LABEL_MCP_MONTHLY,
@@ -24,7 +26,7 @@ from ..models import (
     UsageMetric,
 )
 from ..net import NetworkFunc, Request
-from ._base import ServiceCache, parse_json, send
+from ._base import ServiceCache, parse_json, send, to_float
 
 CACHE_TTL = 10.0  # 秒;与 macOS 版一致
 
@@ -59,8 +61,9 @@ class GLMPlatformService:
             instance_id=config.instance_id,
             display_name=config.display_name,
             metrics=data,
+            # 健康度:各项剩余比例都要 ≥15%;比例算不出来(非有限)的条目跳过
             is_healthy=all(
-                m.current_value / m.total_value * 100 >= 15
+                _remaining_ratio(m) >= 15
                 for m in data
                 if m.total_value and m.total_value > 0
             ),
@@ -71,18 +74,22 @@ class GLMPlatformService:
     def _parse(self, body: dict) -> list[UsageMetric]:
         # 只信 success 布尔,不看 code 字段
         if body.get("success") is False:
-            raise PlatformError(ErrorKind.API, body.get("msg") or "GLM request failed")
-        limits = (body.get("data") or {}).get("limits")
-        if not limits:
+            raise PlatformError(ErrorKind.API, str(body.get("msg") or "GLM request failed"))
+        data = body.get("data")
+        if not isinstance(data, dict):
+            raise PlatformError(ErrorKind.INVALID_RESPONSE)
+        limits = data.get("limits")
+        if not isinstance(limits, list) or not limits:
             raise PlatformError(ErrorKind.INVALID_RESPONSE)
 
         metrics: list[UsageMetric] = []
         for item in limits:
+            if not isinstance(item, dict):
+                continue
             kind = item.get("type")
             if kind == "TOKENS_LIMIT":
-                try:
-                    used_pct = float(item["percentage"])
-                except (KeyError, TypeError, ValueError):
+                used_pct = to_float(item.get("percentage"))
+                if used_pct is None:
                     continue  # 缺失/类型异常的条目整条跳过
                 remaining = max(0.0, 100 - used_pct)
                 label = LABEL_WEEKLY_LIMIT if item.get("unit") == 6 else LABEL_FIVE_HOUR
@@ -96,13 +103,15 @@ class GLMPlatformService:
                     )
                 )
             elif kind == "TIME_LIMIT":
-                if item.get("usage") is None or item.get("remaining") is None:
+                usage = to_float(item.get("usage"))
+                remaining_count = to_float(item.get("remaining"))
+                if usage is None or remaining_count is None:
                     continue  # 缺次数字段整条跳过,避免谎报 0 次可用
                 metrics.append(
                     UsageMetric(
                         label=LABEL_MCP_MONTHLY,
-                        current_value=float(item["remaining"]),
-                        total_value=float(item["usage"]),
+                        current_value=remaining_count,
+                        total_value=usage,
                         unit="times",
                         reset_time=_ms_to_seconds(item.get("nextResetTime")),
                     )
@@ -116,8 +125,18 @@ class GLMPlatformService:
         return metrics
 
 
+def _remaining_ratio(metric) -> float:
+    """剩余比例(百分比);算不出来(非有限)时返回 -1(视作不健康)"""
+    try:
+        ratio = metric.current_value / metric.total_value * 100
+    except ZeroDivisionError:
+        return -1.0
+    return ratio if math.isfinite(ratio) else -1.0
+
+
 def _ms_to_seconds(ts) -> float | None:
-    """毫秒时间戳转 Unix 秒;缺失或非正数返回 None(对齐 Swift 的 ms > 0 判定)"""
-    if ts is None or ts <= 0:
+    """毫秒时间戳转 Unix 秒;缺失、非数字或非正数返回 None(对齐 Swift 的 ms > 0 判定)"""
+    value = to_float(ts)
+    if value is None or value <= 0:
         return None
-    return float(ts) / 1000.0
+    return value / 1000.0

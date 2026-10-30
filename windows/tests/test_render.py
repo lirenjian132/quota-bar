@@ -113,9 +113,11 @@ def test_format_credits_count():
 def test_metric_detail_text():
     assert metric_detail_text(UsageMetric(LABEL_FIVE_HOUR, 80, 100), "zh-Hans") == "80%"
     assert metric_detail_text(UsageMetric(LABEL_FIVE_HOUR, 66.666, 100), "zh-Hans") == "66%"  # 截断
-    assert metric_detail_text(UsageMetric("mcp_monthly", 932, 1000, "times"), "zh-Hans") == "932/1000"
-    assert metric_detail_text(UsageMetric("mcp_monthly", 932, 8000000000, "times"), "zh-Hans") == "932/80.00亿"
-    assert metric_detail_text(UsageMetric(LABEL_BALANCE, 253.7, None, "CNY"), "en") == "254"
+    # 次数型:两侧都做大数缩写 + 带单位(对齐 macOS 弹窗)
+    assert metric_detail_text(UsageMetric("mcp_monthly", 932, 1000, "times"), "zh-Hans") == "932/1000 times"
+    assert metric_detail_text(UsageMetric("mcp_monthly", 932, 8000000000, "times"), "zh-Hans") == "932/80.00亿 times"
+    # 余额型:整数 + 单位(对齐 macOS 弹窗)
+    assert metric_detail_text(UsageMetric(LABEL_BALANCE, 253.7, None, "CNY"), "en") == "254 CNY"
 
 
 def test_format_balance():

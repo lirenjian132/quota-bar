@@ -15,11 +15,12 @@
 from __future__ import annotations
 
 import ctypes
+import time
 from collections import Counter
 from typing import Optional
 
 from PyQt5.QtCore import QPoint, QRect, QTimer, Qt
-from PyQt5.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QPainter
 from PyQt5.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -34,13 +35,12 @@ from ..i18n import get_i18n
 from ..models import PlatformInstance, PlatformType
 from .winutil import (
     detach_from_taskbar,
-    show_window,
     embed_in_taskbar,
     ensure_topmost,
     find_notify_area,
     find_taskbar_host,
     get_taskbar_bg_color,
-    is_covered_by_taskbar,
+    is_taskbar_visible,
     move_in_parent,
     taskbar_rect,
 )
@@ -97,36 +97,24 @@ def _short_countdown(reset_time) -> str:
     """
     if reset_time is None:
         return ""
+    i18n = get_i18n()
     kind, payload = render.reset_countdown(reset_time)
     if kind == "soon":
-        return "即将"
+        return i18n.t("daily.reset.soon")
     if kind == "hm":
         hours, minutes = payload
         if hours > 0:
-            return f"{hours}时"
-        return f"{minutes}分"
+            return f"{hours}{i18n.t('detail.hourShort')}"
+        return f"{minutes}{i18n.t('detail.minuteShort')}"
     days, hours = payload
-    return f"{days}天{hours}时" if hours else f"{days}天"
+    day = i18n.t("detail.dayShort")
+    hour = i18n.t("detail.hourShort")
+    return f"{days}{day}{hours}{hour}" if hours else f"{days}{day}"
 
 
 def _baseline(height: int, fm: QFontMetrics) -> int:
     # 行内基线 y:让文字在给定行高内垂直居中
     return (height - fm.height()) // 2 + fm.ascent()
-
-
-def _taskbar_is_light() -> bool:
-    """系统任务栏是否浅色主题"""
-    try:
-        import winreg
-
-        with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-        ) as key:
-            value, _ = winreg.QueryValueEx(key, "SystemAppsUseLightTheme")
-            return bool(value)
-    except OSError:
-        return False
 
 
 def account_initials(
@@ -275,6 +263,10 @@ class _TooltipWindow(QWidget):
         geo = screen.availableGeometry() if screen else None
         if geo is not None:
             x = max(geo.left() + 4, min(x, geo.right() - self.width() - 4))
+            if y < geo.top() + 4:
+                # 面板贴近屏幕顶:上方放不下,改放面板下方
+                # (硬钳到屏幕顶会盖住面板和鼠标,想看的数字反而被浮窗挡住)
+                y = min(anchor_rect.bottom() + 8, geo.bottom() - self.height() - 4)
             y = max(geo.top() + 4, y)
         self.move(x, y)
         if not self.isVisible():
@@ -318,6 +310,8 @@ class StatusOverlay(QWidget):
         self._dragging = False
         # 嵌入任务栏:真正成为任务栏的元素(不是浮在上面的图案)
         self._embed_host: Optional[int] = None
+        # 上次尝试嵌入的时刻(失败后退避重试)
+        self._last_attach_try: float = 0.0
         self.refresh()
 
     def _win_pid(self) -> int:
@@ -333,6 +327,10 @@ class StatusOverlay(QWidget):
 
     def _refresh_taskbar_theme(self) -> None:
         """重采样任务栏颜色,判断明暗(换壁纸/换主题后自动跟上)"""
+        if not is_taskbar_visible():
+            # 任务栏自动隐藏/被全屏应用盖住:屏幕像素采到的不是任务栏,
+            # 采了会让底色和文字色乱跳。沿用上一次的取值。
+            return
         color = get_taskbar_bg_color()
         if not color:
             return
@@ -346,6 +344,8 @@ class StatusOverlay(QWidget):
         悬停浮窗也要持续抢置顶——置顶应用(如 ZCode)铺满全屏,只在首次显示时
         提一次顶会被它重新压住,浮窗就"不出现"。
         """
+        if not self._tray.config.overlay_enabled():
+            return  # 用户已关掉面板:守护不能把它带回来
         if self._embed_host is not None:
             # explorer 重启后任务栏句柄会变,需要重新嵌入
             if find_taskbar_host() != self._embed_host:
@@ -353,6 +353,10 @@ class StatusOverlay(QWidget):
             return
         if not self.isVisible():
             return
+        # 嵌入模式却没挂上任务栏:attach 失败过(explorer 重启的窗口期)之后
+        # 没有重试路径,面板会永远消失——这里按退避间隔重试
+        if self._tray.config.overlay_embedded():
+            self._retry_attach()
         # 无条件提到 topmost 最前:置顶的**活动窗口**(如 ZCode,铺满全屏)会抢走
         # 任务栏区域的鼠标消息,面板收不到 hover —— 必须始终排在它前面。
         # SetWindowPos 带 NOMOVE|NOSIZE|NOACTIVATE 不会重绘内容,不会引起闪烁。
@@ -365,6 +369,49 @@ class StatusOverlay(QWidget):
         self._embed_host = None
         self.attach()
 
+    def _retry_attach(self) -> None:
+        """嵌入失败后按退避间隔重试(2 秒一次)
+
+        explorer 重启有一个窗口期:旧任务栏已销毁、新的还没起来,此刻
+        attach() 必然失败。没有重试的话,_embed_host 会一直是 None,
+        守护逻辑再也不会尝试嵌入——面板从此消失,只能重启应用。
+        """
+        now = time.time()
+        if now - self._last_attach_try < 2.0:
+            return
+        self._last_attach_try = now
+        self.attach()
+
+    def ensure_embedded_state(self) -> None:
+        """面板重新显示时保证嵌入态有效
+
+        explorer 重启后旧的任务栏句柄已失效,此时不能拿着旧句柄直接跳过嵌入。
+        """
+        if not self._tray.config.overlay_embedded():
+            return
+        if self._embed_host is not None and find_taskbar_host() != self._embed_host:
+            self._embed_host = None
+            detach_from_taskbar(int(self.winId()))
+        if self._embed_host is None:
+            self.attach()
+
+    @staticmethod
+    def _taskbar_screen():
+        """任务栏所在的屏幕(多显示器时任务栏可能在副屏上)
+
+        用主屏做位置校验的话,副屏任务栏的用户拖完面板重启就会被拽回主屏——
+        面板永远出现在错误的那块屏上。
+        """
+        primary = QGuiApplication.primaryScreen()
+        tb = taskbar_rect()
+        if tb is None:
+            return primary
+        for screen in QGuiApplication.screens():
+            geo = screen.geometry()
+            if tb.left < geo.right() and tb.right > geo.left() and tb.top < geo.bottom() and tb.bottom > geo.top():
+                return screen
+        return primary
+
     def attach(self) -> None:
         """尝试嵌入任务栏(真正成为任务栏的元素)。
 
@@ -376,6 +423,8 @@ class StatusOverlay(QWidget):
             return
         if not self._tray.config.overlay_embedded():
             return
+        if not self._tray.config.overlay_enabled():
+            return  # 用户已关掉面板:不能借嵌入把它带回来
         host = embed_in_taskbar(int(self.winId()))
         if host is None:
             return
@@ -396,7 +445,8 @@ class StatusOverlay(QWidget):
             Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.show()
+        # 脱离后按「面板开关」决定显隐:用户关掉的面板不能被 detach 带回来
+        self.setVisible(self._tray.config.overlay_enabled())
         self._place()
         ensure_topmost(int(self.winId()))
 
@@ -408,13 +458,21 @@ class StatusOverlay(QWidget):
         instances = self.overlay_instances()
         label_fm = QFontMetrics(self._label_font())
         width = PADDING * 2
-        # 数值列按**最坏情况**("100%")占位:数据随时会变(1% → 100%),
+        # 数值列按**最坏情况**占位:数据随时会变(1% → 100%),
         # 按当前实际值算宽会在数字变长时把末尾截掉
         worst_fm = QFontMetrics(self._num_font("100%"))
+        pct_w = worst_fm.horizontalAdvance("100%")
+        # 余额型数字用 K 缩写后可能比 "100%" 还长(余额上万 → "10000.0K")
+        balance_w = worst_fm.horizontalAdvance("10000.0K")
         for index, inst in enumerate(instances):
-            label, _text = self._chip_texts(inst)
+            label, text = self._chip_texts(inst)
             width += label_fm.horizontalAdvance(label) + _GAP_LABEL_NUM
-            width += worst_fm.horizontalAdvance("100%")
+            metrics = self._tray._visible_metrics(inst.id)
+            is_balance = bool(metrics) and metrics[0].unit == "CNY"
+            reserve = max(pct_w, balance_w) if is_balance else pct_w
+            # 实际文本更宽时也按实际算(余额已经到十万级)
+            reserve = max(reserve, QFontMetrics(self._num_font(text)).horizontalAdvance(text))
+            width += reserve
             if index < len(instances) - 1:
                 width += BLOCK_GAP
         width = max(width, 60)
@@ -430,7 +488,7 @@ class StatusOverlay(QWidget):
                 anchor = self._tray.config.overlay_anchor()
                 x = tb_w - width - _TRAY_RESERVE
                 if anchor == "left":
-                    x = 8  # 靠任务栏左端(开始按钮右侧)
+                    x = 48  # 靠任务栏左端(避开最左边的开始按钮)
                 elif notify:
                     try:
                         from .winutil import RECT
@@ -442,17 +500,17 @@ class StatusOverlay(QWidget):
                         x = (nr.left - tb.left) - width - 4
                     except Exception:
                         pass
+                # 钳制到任务栏范围内:账号多/通知区靠左时 x 会算成负数,
+                # 面板左侧被推出任务栏(画不全也点不到)
+                x = max(0, min(x, max(0, tb_w - width)))
                 y = max(0, (tb_h - height) // 2)
                 move_in_parent(int(self.winId()), x, y, width, height)
             return
 
         if self.width() != width or self.height() != height:
             self.setFixedSize(width, height)
-            # 尺寸变了必须同步更新命中区:alpha 窗口按 region 命中,
-            # region 还是旧尺寸的话,新增区域收不到鼠标事件(hover/点击全失效)
 
-
-        screen = QGuiApplication.primaryScreen()
+        screen = self._taskbar_screen()
         if screen is None:
             return
         sgeo = screen.geometry()
@@ -460,8 +518,9 @@ class StatusOverlay(QWidget):
 
         remembered = self._tray.config.overlay_pos()
         if remembered is not None:
-            # 记住的位置:必须 x 落在屏幕内、y 落在任务栏上,否则回默认
-            # (只校验 y 的话,拖到屏幕外的面板重启后永久失联)
+            # 记住的位置:必须 x 落在(任务栏所在)屏幕内、y 落在任务栏上,否则回默认
+            # (只校验 y 的话,拖到屏幕外的面板重启后永久失联;
+            #  用主屏校验的话,任务栏在副屏上的用户每次重启都会被拽回主屏)
             x, y = remembered
             x_ok = sgeo.left() <= x <= sgeo.right() - 40
             y_ok = tb is not None and tb.top - 6 <= y <= tb.bottom + 6
@@ -534,7 +593,9 @@ class StatusOverlay(QWidget):
 
         # 不透明铺满任务栏色:与任务栏严丝合缝(颜色每 2 秒重采样,跟随壁纸/主题)
         painter.fillRect(self.rect(), QColor(self._bg_color))
-        light = _taskbar_is_light()
+        # 明暗以**任务栏实际采样色**的亮度为准:注册表主题键在 Win10/Win11 名字不同,
+        # 缺键时会恒判"深色",白字画在浅色任务栏上完全看不清。
+        light = not self._is_dark
         # 数值恒为白(浅色任务栏用深色);标签用状态色随额度变色
         num_color = QColor("#FFFFFF") if not light else QColor("#1E1E1E")  # noqa: F841
 
@@ -630,13 +691,15 @@ class StatusOverlay(QWidget):
         if event.button() == Qt.LeftButton and self._press_pos is not None:
             moved = (event.globalPos() - self._press_pos).manhattanLength()
             if self._dragging and moved > 5:
-                # 拖完记住位置:想放左放右都行
-                self._tray.config.set_overlay_pos((self.x(), self.y()))
+                # 拖完记住位置:想放左放右都行(写盘失败时位置不记,面板停在原处)
+                with self._tray._config_write():
+                    self._tray.config.set_overlay_pos((self.x(), self.y()))
             elif not self._dragging:
                 index = self._chip_at(event.pos())
                 if index is not None:
                     instance_id = self._chips[index][1]
-                    self._tray.config.set_active_instance_id(instance_id)
+                    with self._tray._config_write():
+                        self._tray.config.set_active_instance_id(instance_id)
                     self._tray._toggle_detail()
                     self.update()
         self._press_pos = None
@@ -675,9 +738,9 @@ class StatusOverlay(QWidget):
                 title = i18n.t(key)
                 if title == key:
                     title = metric.label
-                value = render.tray_text(metric, mode)
-                if metric.unit == "%":
-                    value = f"{value}%"
+                # 百分比按显示模式(已用/剩余);次数/余额型走详情口径,
+                # 不能当百分比渲染成裸数字(932/1000 会被显示成 "93")
+                value = render.metric_value_text(metric, mode, i18n.locale)
                 extra = _short_countdown(metric.reset_time)
                 rows.append((color, acc, inst.display_name, title, value, extra))
         return rows

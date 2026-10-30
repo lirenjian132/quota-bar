@@ -60,10 +60,13 @@ class PlatformManager:
 
     def fetch_usage(self, instance_id: str) -> PlatformUsageData:
         """拉取单实例用量;失败抛 PlatformError"""
+        inst = self._config.instance(instance_id)
+        if inst is None:
+            # 实例不存在(已删/从未存在):别回落成「平台未配置」——
+            # 那是误导性文案,会把用户引去改一个根本不存在的账号配置
+            raise KeyError(f"实例不存在: {instance_id}")
         if not self._config.is_configured(instance_id):
-            inst = self._config.instance(instance_id)
-            platform = inst.platform_type if inst else PlatformType.MINIMAX_CN
-            raise _not_configured(platform)
+            raise _not_configured(inst.platform_type)
         cfg: PlatformConfigData = self._config.config_data(instance_id)
         return self.service_for(instance_id).fetch_usage(cfg, self._network)
 

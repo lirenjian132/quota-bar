@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Optional
 
 
 def _fix_qt_plugin_path() -> None:
@@ -26,18 +27,30 @@ def _fix_qt_plugin_path() -> None:
     )
 
 
-def _acquire_single_instance_lock(app) -> bool:
-    """单实例锁:已有实例在跑就返回 False(双击两次会写坏同一个 settings.json)"""
+#: 单实例锁用的命名管道名(与已安装的 QuotaBar 共用同一个,保证不重复启动)
+_SINGLE_INSTANCE_KEY = "QuotaBarWinSingleInstance"
+
+
+def _acquire_single_instance_lock(app, key: Optional[str] = None) -> bool:
+    """单实例锁:已有实例在跑就返回 False(双击两次会写坏同一个 settings.json)
+
+    Windows 上 QLocalServer 走命名管道:管道名被占用时 listen() 直接失败,
+    外部进程也拆不掉别人活着的管道——所以 listen 的返回值就是可靠的判据。
+
+    不要在 listen 之后再"自连探测":那连的是**自家**的 server,永远连得上,
+    会把第一个实例也判成"已有实例"而退出(应用永远起不来)。
+    """
     from PyQt5.QtNetwork import QLocalServer, QLocalSocket
 
-    key = "QuotaBarWinSingleInstance"
+    key = key or _SINGLE_INSTANCE_KEY
     probe = QLocalSocket(app)
     probe.connectToServer(key)
     if probe.waitForConnected(150):
         return False  # 已有实例
     QLocalServer.removeServer(key)
     server = QLocalServer(app)
-    server.listen(key)
+    if not server.listen(key):
+        return False  # 监听失败:宁可不起,也不能和另一个实例共写同一个 settings.json
     return True
 
 

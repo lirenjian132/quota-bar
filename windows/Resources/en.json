@@ -127,5 +127,10 @@
   "login.browserHint": "Sign in in the newly opened browser window, then come back here and click \"Done & extract\" — the app will read the credentials automatically.",
   "detail.dragToReorder": "Drag a label onto another to reorder",
   "menu.showPercent": "Show percent sign",
-  "login.noBrowser": "No usable browser (Edge/Chrome) found. Please copy the cookie manually from your browser into the config field."
+  "login.noBrowser": "No usable browser (Edge/Chrome) found. Please copy the cookie manually from your browser into the config field.",
+  "error.saveFailed": "Could not save: %@",
+  "menu.trayTooltipMore": "…%d accounts total",
+  "detail.hourShort": "h",
+  "detail.minuteShort": "m",
+  "detail.dayShort": "d"
 }
