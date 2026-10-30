@@ -41,7 +41,7 @@ if TYPE_CHECKING:  # 仅类型标注用,避免与 tray 模块形成导入环
     from .tray import TrayApp
 
 #: 弹窗固定宽度
-PANEL_WIDTH = 400
+PANEL_WIDTH = 420
 
 #: 健康行配色(与托盘状态点同一套色板)
 _COLOR_GREEN = "#34C759"
@@ -82,6 +82,9 @@ class DetailWindow(QDialog):
         # 配置面板输入(整体重建时保留,语言切换不丢用户已输内容)
         self._api_key_text = ""
         self.setWindowTitle(self._i18n.t("app.name"))
+        # 置顶:普通窗口会被置顶应用(如 ZCode)盖住
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, False)
         self.setFixedWidth(PANEL_WIDTH)
         self._root = QVBoxLayout(self)
         self._root.setContentsMargins(12, 12, 12, 12)
@@ -215,15 +218,34 @@ class DetailWindow(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        active_id = self._config.active_instance_id()
-        inst = self._config.instance(active_id) if active_id else None
-        if inst is None:
+        # 显示**全部**启用账号(不只是激活的那个)——悬停浮窗会被置顶窗口盖住,
+        # 点开详情是可靠的全量视图
+        instances = [i for i in self._config.instances() if self._config.is_enabled(i.id)]
+        if not instances:
             self._fill_no_accounts(layout)
             return box
+
+        shown = False
+        for index, inst in enumerate(instances):
+            if index:
+                layout.addSpacing(10)
+            self._fill_account_section(layout, inst)
+            shown = True
+        if not shown:
+            self._fill_no_accounts(layout)
+        return box
+
+    def _fill_account_section(self, layout: QVBoxLayout, inst: PlatformInstance) -> None:
+        """一个账号的一段:标题 + 指标卡 + 错误/空态"""
+        title = QLabel(inst.display_name)
+        font = title.font()
+        font.setBold(True)
+        title.setFont(font)
+        layout.addWidget(title)
+
         if not self._config.is_configured(inst.id):
             self._fill_unconfigured(layout, inst)
-            return box
-
+            return
         data = self._tray.data(inst.id)
         error = self._tray.error(inst.id)
         if data is not None and data.metrics:
@@ -234,7 +256,6 @@ class DetailWindow(QDialog):
             self._fill_loading(layout)
         else:
             self._fill_no_data(layout)
-        return box
 
     def _fill_no_accounts(self, layout: QVBoxLayout) -> None:
         """一个账号都没有:提示去托盘菜单添加"""

@@ -20,7 +20,14 @@ from typing import Optional
 
 from PyQt5.QtCore import QPoint, QRect, QTimer, Qt
 from PyQt5.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter
-from PyQt5.QtWidgets import QFrame, QGridLayout, QLabel, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .. import render
 from ..i18n import get_i18n
@@ -35,7 +42,6 @@ from .winutil import (
     get_taskbar_bg_color,
     is_covered_by_taskbar,
     move_in_parent,
-    set_hit_region,
     taskbar_rect,
 )
 
@@ -83,6 +89,26 @@ _NUM_FONT_PT = 15
 _LABEL_FONT_PT = 11
 
 
+def _short_countdown(reset_time) -> str:
+    """重置倒计时的短格式:3时 / 2天22时 / 11天。
+
+    完整文案("还剩3小时0分")在浮窗里太长,会把卡片撑得很宽;
+    倒计时只需要一眼看出量级,短格式够用。
+    """
+    if reset_time is None:
+        return ""
+    kind, payload = render.reset_countdown(reset_time)
+    if kind == "soon":
+        return "即将"
+    if kind == "hm":
+        hours, minutes = payload
+        if hours > 0:
+            return f"{hours}时"
+        return f"{minutes}分"
+    days, hours = payload
+    return f"{days}天{hours}时" if hours else f"{days}天"
+
+
 def _baseline(height: int, fm: QFontMetrics) -> int:
     # 行内基线 y:让文字在给定行高内垂直居中
     return (height - fm.height()) // 2 + fm.ascent()
@@ -124,13 +150,16 @@ def account_initials(
 
 
 class _TooltipWindow(QWidget):
-    """自绘悬停浮窗:一次列出**所有账号的全部指标**。
+    """悬停浮窗:每个账号一张卡,卡内指标横排。
 
-    形态:不透明的深色圆角卡片。背景必须由 QFrame 承载并显式设
-    WA_StyledBackground —— translucent 窗口上直接给 QWidget 设 stylesheet 背景
-    是画不出来的(会全透明)。
-    位置固定在任务栏面板的正上方居中,不跟鼠标跑。
+    排版要点:
+    - 数值紧跟指标名,横向不扫就能对上;
+    - 每个「指标块」(名 + 值 + 倒计时)宽度固定,**所有卡共用同一套块宽**,
+      所以不同账号的同序号指标纵向对齐;
+    - 每行放 2 个指标块,多余的换到下一行(同一列起点),宽度不至于太夸张。
     """
+
+    BLOCKS_PER_ROW = 2
 
     def __init__(self) -> None:
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -138,85 +167,108 @@ class _TooltipWindow(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        # 卡片容器:浅色底 + 深色字(对标 TrafficMonitor 的白底信息框)。
-        # 选择器用 #tipCard 精确限定:写成 QFrame 会让 border 被所有子控件继承,
-        # 结果每个单元格都出现一圈框线。
-        self._frame = QFrame(self)
-        self._frame.setObjectName("tipCard")
-        self._frame.setAttribute(Qt.WA_StyledBackground, True)
-        self._frame.setAttribute(Qt.WA_OpaquePaintEvent, True)
-        self._frame.setStyleSheet(
-            "QFrame#tipCard { background-color: rgba(247, 248, 250, 246);"
-            " border: 1px solid rgba(120, 130, 145, 90);"
-            " border-radius: 10px; }"
-            "QLabel { border: none; background: transparent; }"
-        )
-        outer.addWidget(self._frame)
-        self._grid = QGridLayout(self._frame)
-        self._grid.setContentsMargins(14, 11, 14, 11)
-        self._grid.setHorizontalSpacing(12)
-        self._grid.setVerticalSpacing(5)
-        # 列最小宽度;浮窗整体宽度另行固定(见 TIP_WIDTH)
-        for col, width in ((0, 34), (1, 104), (2, 58), (3, 132)):
-            self._grid.setColumnMinimumWidth(col, width)
-        self._sig = None  # 上次内容签名,内容没变就不重建(重建会导致闪烁)
+        outer.setSpacing(5)
+        self._cards_box = outer
+        self._sig = None
 
-    def show_rows(self, rows: list[tuple[str, str, str, str, str]], anchor_rect) -> None:
-        """rows: [(标签色, 账号标签, 指标名, 数值, 倒计时)]
-        anchor_rect: 任务栏面板的屏幕矩形,浮窗固定显示在它正上方居中。
-        """
-        # 内容没变就不重建网格:重建会让浮窗闪一下(尤其鼠标移动时)
+    def show_rows(self, rows: list[tuple[str, str, str, str, str, str]], anchor_rect) -> None:
+        """rows: [(标签色, 账号标签, 账号显示名, 指标名, 数值, 倒计时)]"""
         sig = tuple(rows)
         if sig == self._sig and self.isVisible():
             return
         self._sig = sig
 
-        while self._grid.count():
-            item = self._grid.takeAt(0)
+        while self._cards_box.count():
+            item = self._cards_box.takeAt(0)
             w = item.widget()
             if w is not None:
                 w.deleteLater()
 
-        line = 0
-        last_acc = None
-        for acc_color, acc, metric, value, extra in rows:
-            if acc != last_acc:
-                if last_acc is not None:
-                    line += 1  # 账号之间留一行空隙
-                # 账号标签:彩色加粗文字(不用色块——色块显得生硬)
-                acc_label = QLabel(acc)
-                acc_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                acc_label.setStyleSheet(
-                    f"color:{acc_color}; font-size:12px; font-weight:bold;"
-                    " border: none; background: transparent;"
-                )
-                self._grid.addWidget(acc_label, line, 0, Qt.AlignLeft | Qt.AlignVCenter)
-                last_acc = acc
+        # 按账号分组
+        groups: list[tuple[str, str, str, list[tuple[str, str, str]]]] = []
+        for acc_color, acc, acc_name, metric, value, extra in rows:
+            if groups and groups[-1][1] == acc:
+                groups[-1][3].append((metric, value, extra))
+            else:
+                groups.append((acc_color, acc, acc_name, [(metric, value, extra)]))
 
-            m = QLabel(metric)
-            m.setStyleSheet("color:#4A5261; font-size:11px; border: none; background: transparent;")
-            self._grid.addWidget(m, line, 1, Qt.AlignLeft | Qt.AlignVCenter)
+        f_tag = QFont("Microsoft YaHei UI", 10, QFont.Bold)
+        f_name = QFont("Microsoft YaHei UI", 9)
+        f_metric = QFont("Microsoft YaHei UI", 9)
+        f_value = QFont("Microsoft YaHei UI", 12, QFont.Bold)
+        f_extra = QFont("Microsoft YaHei UI", 8)
 
-            v = QLabel(value)
-            v.setStyleSheet("color:#161B22; font-size:13px; font-weight:bold; border: none; background: transparent;")
-            self._grid.addWidget(v, line, 2, Qt.AlignRight | Qt.AlignVCenter)
+        # 全局尺寸:所有卡共用,保证纵向对齐
+        tag_w = max([QFontMetrics(f_tag).horizontalAdvance(a) for _, a, _, _ in groups] or [20])
+        name_w = max([QFontMetrics(f_name).horizontalAdvance(n) for _, _, n, _ in groups] or [40])
+        metric_w = max([QFontMetrics(f_metric).horizontalAdvance(m) for _, _, _, ms in groups for m, _, _ in ms] or [40])
+        value_w = max([QFontMetrics(f_value).horizontalAdvance(v) for _, _, _, ms in groups for _, v, _ in ms] or [20])
+        extra_w = max([QFontMetrics(f_extra).horizontalAdvance(e) for _, _, _, ms in groups for _, _, e in ms] or [20])
 
-            e = QLabel(extra)
-            e.setStyleSheet("color:#98A1AE; font-size:10px; border: none; background: transparent;")
-            self._grid.addWidget(e, line, 3, Qt.AlignLeft | Qt.AlignVCenter)
-            line += 1
+        # 每个指标块:指标名 + 数值 一行,倒计时 小字一行(省宽度)
+        block_w = metric_w + 10 + value_w
+        card_w = (
+            PADDING * 2 + tag_w + 10 + name_w + 14
+            + self.BLOCKS_PER_ROW * (block_w + 10)
+        )
 
-        # 先 show 再 adjustSize:未显示的窗口 adjustSize 拿不到真实高度,
-        # 会导致浮窗按默认高度定位、压住任务栏
-        if not self.isVisible():
-            self.show()
-        self._grid.activate()
-        # 宽度固定、高度随行数:宽度固定才不会因文字长短变化而上下跳动(看着像闪)
-        self._frame.setFixedWidth(_TIP_WIDTH)
-        self._frame.adjustSize()
-        self.setFixedSize(_TIP_WIDTH, self._frame.height())
-        show_window(int(self.winId()))  # Qt 的 show() 在 translucent 窗口上偶尔不生效
+        for acc_color, acc, acc_name, metrics in groups:
+            card = QFrame()
+            card.setFixedWidth(card_w)
+            card.setStyleSheet(
+                "QFrame { background-color: #FFFFFF;"
+                " border: 1px solid rgba(0, 0, 0, 26); border-radius: 7px; }"
+            )
+            grid = QGridLayout(card)
+            grid.setContentsMargins(PADDING, 5, PADDING, 5)
+            grid.setHorizontalSpacing(10)
+            grid.setVerticalSpacing(2)
+            # 多余空间给最后一列:否则 QGridLayout 会拉伸前面的列,内容散开不靠左
+            grid.setColumnStretch(2 + self.BLOCKS_PER_ROW, 1)
 
+            tag = QLabel(acc)
+            tag.setFixedWidth(tag_w)
+            tag.setFont(f_tag)
+            tag.setStyleSheet(f"color:{acc_color}; border: none; background: transparent;")
+            grid.addWidget(tag, 0, 0, Qt.AlignLeft | Qt.AlignVCenter)
+            name = QLabel(acc_name)
+            name.setFixedWidth(name_w)
+            name.setFont(f_name)
+            name.setStyleSheet("color:#98A1AE; border: none; background: transparent;")
+            grid.addWidget(name, 0, 1, Qt.AlignLeft | Qt.AlignVCenter)
+
+            for k, (metric, value, extra) in enumerate(metrics):
+                r, c = divmod(k, self.BLOCKS_PER_ROW)
+                cell = QWidget()
+                cell.setFixedWidth(block_w)
+                cl = QVBoxLayout(cell)
+                cl.setContentsMargins(0, 0, 0, 0)
+                cl.setSpacing(0)
+                line = QHBoxLayout()
+                line.setContentsMargins(0, 0, 0, 0)
+                line.setSpacing(6)
+                m = QLabel(metric)
+                m.setFixedWidth(metric_w)
+                m.setFont(f_metric)
+                m.setStyleSheet("color:#4A5261; border: none; background: transparent;")
+                line.addWidget(m, 0, Qt.AlignLeft | Qt.AlignVCenter)
+                v = QLabel(value)
+                v.setFixedWidth(value_w)
+                v.setFont(f_value)
+                v.setStyleSheet("color:#161B22; border: none; background: transparent;")
+                line.addWidget(v, 0, Qt.AlignLeft | Qt.AlignVCenter)
+                cl.addLayout(line)
+                if extra:
+                    e = QLabel(extra)
+                    e.setFixedWidth(extra_w)
+                    e.setFont(f_extra)
+                    e.setStyleSheet("color:#98A1AE; border: none; background: transparent;")
+                    cl.addWidget(e, 0, Qt.AlignRight | Qt.AlignTop)
+                grid.addWidget(cell, r, 2 + c, Qt.AlignLeft | Qt.AlignVCenter)
+
+            self._cards_box.addWidget(card)
+
+        self.adjustSize()
         x = anchor_rect.left() + (anchor_rect.width() - self.width()) // 2
         y = anchor_rect.top() - self.height() - 8
         screen = QGuiApplication.screenAt(QPoint(anchor_rect.left(), anchor_rect.top()))
@@ -225,8 +277,9 @@ class _TooltipWindow(QWidget):
             x = max(geo.left() + 4, min(x, geo.right() - self.width() - 4))
             y = max(geo.top() + 4, y)
         self.move(x, y)
+        if not self.isVisible():
+            self.show()
         self.raise_()
-        # 置顶:置顶应用(如 ZCode)会盖住浮窗,提到 topmost 最前才看得见
         ensure_topmost(int(self.winId()))
 
 
@@ -235,13 +288,12 @@ class StatusOverlay(QWidget):
 
     def __init__(self, tray):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        # 半透明:Win10 任务栏本身是半透明材质(颜色=壁纸透过后的混合),
-        # 面板用半透明底色就能让任务栏颜色透上来 —— 换壁纸/换主题自动跟随,
-        # 不用去采样一个会过期的死颜色。
-        # 命中测试:alpha 窗口默认按像素 alpha 判定,透明处会穿透给下层窗口;
-        # 用 SetWindowRgn 把整个矩形设为命中区即可(见 showEvent)。
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        # 面板做成**不透明**窗口 + 底色取任务栏实际颜色(每 2 秒重采样):
+        #   · 不透明 → 命中按整个矩形,hover/点击稳定;
+        #     (alpha 透明窗口的命中在 Qt 下不可靠,文字旁透明处会穿透给下层窗口)
+        #   · 底色跟随任务栏 → 换壁纸/换主题后 2 秒内跟上,观感与半透明一致
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)  # 重绘不擦背景,避免闪烁
         self.setMouseTracking(True)
         self._tray = tray
         self._chips: list[tuple[QRect, str]] = []    # [(QRect, instance_id)]
@@ -288,12 +340,6 @@ class StatusOverlay(QWidget):
         self._is_dark = self._bg_color.lightness() < 128
         self.update()
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        # alpha 窗口默认按像素 alpha 命中,透明处会穿透给下层窗口;
-        # 设命中区为整个矩形,面板才能正常接收 hover/点击
-        set_hit_region(int(self.winId()), self.width(), self.height())
-
     def _ensure_visible(self) -> None:
         """守护:嵌入模式下探测 explorer 重启;浮层模式下被盖则提回最前。
 
@@ -307,15 +353,11 @@ class StatusOverlay(QWidget):
             return
         if not self.isVisible():
             return
-        # 只在真被盖时才提顶:无条件 SetWindowPos 会让透明窗口反复重绘(=闪烁)。
-        # 遮挡检测要排除本进程窗口,否则自家浮窗会被当成"遮挡者"互相抢。
-        pid = self._win_pid()
-        ignore = [int(self._tip.winId())]
-        if is_covered_by_taskbar(int(self.winId()), ignore, exclude_pid=pid):
-            ensure_topmost(int(self.winId()))
-        if self._tip.isVisible() and is_covered_by_taskbar(
-            int(self._tip.winId()), ignore, exclude_pid=pid
-        ):
+        # 无条件提到 topmost 最前:置顶的**活动窗口**(如 ZCode,铺满全屏)会抢走
+        # 任务栏区域的鼠标消息,面板收不到 hover —— 必须始终排在它前面。
+        # SetWindowPos 带 NOMOVE|NOSIZE|NOACTIVATE 不会重绘内容,不会引起闪烁。
+        ensure_topmost(int(self.winId()))
+        if self._tip.isVisible():
             ensure_topmost(int(self._tip.winId()))
 
     def _reattach(self) -> None:
@@ -366,12 +408,13 @@ class StatusOverlay(QWidget):
         instances = self.overlay_instances()
         label_fm = QFontMetrics(self._label_font())
         width = PADDING * 2
+        # 数值列按**最坏情况**("100%")占位:数据随时会变(1% → 100%),
+        # 按当前实际值算宽会在数字变长时把末尾截掉
+        worst_fm = QFontMetrics(self._num_font("100%"))
         for index, inst in enumerate(instances):
-            label, text = self._chip_texts(inst)
-            # 用**实际文本**的字体度量,不能用固定样本("100"比"1"宽,会算窄导致末尾截断)
-            num_fm = QFontMetrics(self._num_font(text))
+            label, _text = self._chip_texts(inst)
             width += label_fm.horizontalAdvance(label) + _GAP_LABEL_NUM
-            width += num_fm.horizontalAdvance(text)
+            width += worst_fm.horizontalAdvance("100%")
             if index < len(instances) - 1:
                 width += BLOCK_GAP
         width = max(width, 60)
@@ -405,6 +448,8 @@ class StatusOverlay(QWidget):
 
         if self.width() != width or self.height() != height:
             self.setFixedSize(width, height)
+            # 尺寸变了必须同步更新命中区:alpha 窗口按 region 命中,
+            # region 还是旧尺寸的话,新增区域收不到鼠标事件(hover/点击全失效)
 
 
         screen = QGuiApplication.primaryScreen()
@@ -487,10 +532,8 @@ class StatusOverlay(QWidget):
         )
         self._chips = []
 
-        # 半透明底色:下面的任务栏颜色会透上来,换壁纸自动跟随
-        base = QColor(self._bg_color)
-        base.setAlpha(170 if self._is_dark else 165)
-        painter.fillRect(self.rect(), base)
+        # 不透明铺满任务栏色:与任务栏严丝合缝(颜色每 2 秒重采样,跟随壁纸/主题)
+        painter.fillRect(self.rect(), QColor(self._bg_color))
         light = _taskbar_is_light()
         # 数值恒为白(浅色任务栏用深色);标签用状态色随额度变色
         num_color = QColor("#FFFFFF") if not light else QColor("#1E1E1E")  # noqa: F841
@@ -605,14 +648,14 @@ class StatusOverlay(QWidget):
         origin = self.mapToGlobal(QPoint(0, 0))
         return QRect(origin.x(), origin.y(), self.width(), self.height())
 
-    def _tooltip_rows(self) -> list[tuple[str, str, str, str, str]]:
+    def _tooltip_rows(self) -> list[tuple[str, str, str, str, str, str]]:
         """浮窗内容:**所有账号**的全部指标(与鼠标停在哪个号上无关)。
 
         每行: (标签色, 账号标签, 指标名, 数值, 倒计时)
         """
         i18n = get_i18n()
         mode = self._tray.config.display_mode()
-        rows: list[tuple[str, str, str, str, str]] = []
+        rows: list[tuple[str, str, str, str, str, str]] = []
         labels = account_initials(
             self.overlay_instances(), self._tray.config.registration_order()
         )
@@ -625,7 +668,7 @@ class StatusOverlay(QWidget):
                 render.status_color(data), _STATUS_QCOLOR[render.COLOR_GRAY]
             ).name()
             if not metrics:
-                rows.append((color, acc, i18n.t("popover.noData"), "--", ""))
+                rows.append((color, acc, inst.display_name, i18n.t("popover.noData"), "--", ""))
                 continue
             for metric in metrics:
                 key = f"metric.{metric.label}"
@@ -635,21 +678,8 @@ class StatusOverlay(QWidget):
                 value = render.tray_text(metric, mode)
                 if metric.unit == "%":
                     value = f"{value}%"
-                extra = ""
-                if metric.reset_time is not None:
-                    kind, payload = render.reset_countdown(metric.reset_time)
-                    if kind == "soon":
-                        extra = i18n.t("daily.reset.soon")
-                    elif kind == "hm":
-                        hours, minutes = payload
-                        if hours > 0:
-                            extra = i18n.t("daily.reset.remaining", hours, minutes)
-                        else:
-                            extra = i18n.t("daily.reset.minutesonly", minutes)
-                    elif kind == "days":
-                        days, hours = payload
-                        extra = i18n.t("weekly.reset.remaining", days, hours)
-                rows.append((color, acc, title, value, extra))
+                extra = _short_countdown(metric.reset_time)
+                rows.append((color, acc, inst.display_name, title, value, extra))
         return rows
 
     def leaveEvent(self, event) -> None:

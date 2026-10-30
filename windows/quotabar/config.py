@@ -259,6 +259,11 @@ class ConfigService:
             self._save_settings()
 
 
+    def instance_by_id(self, instance_id: str) -> Optional[str]:
+        """按 id 取账号显示名"""
+        inst = self.instance(instance_id)
+        return inst.display_name if inst else None
+
     def _find_instance(self, instance_id: str) -> dict:
         """按 id 找实例条目;不存在抛 KeyError(裸 next() 会抛 StopIteration,调用方接不住)"""
         for it in self._settings["instances"]:
