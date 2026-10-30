@@ -26,6 +26,7 @@
 - 开机启动项：状态栏右键菜单开关（基于 SMAppService，自 v2.0.4 沿用保留）
 
 ### Changed
+- **状态栏块标识改为染色字母**：原「圆点 + 数值」改为「实例名缩写 + 数值」（如 M1/M2/G/S），字母颜色即健康预警（红黄绿语义不变）；块宽贴合内容（去掉固定最小/理想宽、`minimumItemWidth` 36→24、内边距收紧），多账号块间更紧凑
 - 平台精简：移除 DeepSeek / MiMo；Stepfun 由旧内部接口方案替换为新契约实现（Step Code 开源客户端 gRPC-Connect），现支持 MiniMax + GLM + TokenRhythm + Stepfun
 - API key / 会话凭据存储改用应用私有文件（FileKeyStore，文件权限 0600），彻底消除钥匙串登录密码弹窗：启动时自动从 Keychain 一次性迁移（仅最后一次授权），此后不再触碰 Keychain
 - 测试隔离根治：测试进程改走独立 UserDefaults suite + 内存 Keychain，不再触碰用户真实配置，也不再因构建签名变化触发系统登录密码弹窗

@@ -2,6 +2,14 @@ import SwiftUI
 
 /// 把渲染逻辑抽成 pure helper, 让单测可以脱离 SwiftUI runtime 直接验证过滤 / 格式.
 enum StatusBarViewHelper {
+    /// 状态栏块首的账号标识: displayTitle 前 maxLength 字符 (M1/M2/G/S1),
+    /// 空名返回 "?" (数据未就绪时也不留空白).
+    static func accountBadge(displayTitle: String, maxLength: Int = 3) -> String {
+        let trimmed = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "?" }
+        return String(trimmed.prefix(maxLength))
+    }
+
     /// 状态点颜色判定顺序 (P2-8, miniMax/DeepSeek Round 2):
     ///   nil 数据 → secondary; 空 metrics → secondary (无数据可判, 不谎报红);
     ///   isHealthy=false → red (与弹窗口径一致);
@@ -130,12 +138,19 @@ struct StatusBarView: View {
         StatusBarViewHelper.statusColor(for: platformData)
     }
 
+    /// 状态栏块首的账号标识字母 (M1/M2/G/S1...): 取 displayName 前 3 字符,
+    /// 空名回退平台默认名首字母. 字母染色保留红黄绿预警语义 (替代原圆点).
+    private var accountBadge: String {
+        StatusBarViewHelper.accountBadge(displayTitle: platformData?.displayName ?? "")
+    }
+
     var body: some View {
-        HStack(spacing: 2) {
-            Image(systemName: "circle.fill")
-                .font(.system(size: 12))
-                .frame(width: 12)
+        HStack(spacing: 1) {
+            Text(accountBadge)
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
                 .foregroundColor(statusColor)
+                .lineLimit(1)
+                .frame(minWidth: 15)
 
             // 0 / 1 个 metric: 大字居中; 2 个: 当前上下两行布局.
             if let secondary = secondaryText {
@@ -158,9 +173,10 @@ struct StatusBarView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
         }
-        .padding(.horizontal, 2)
-        // 不锁 maxHeight: 让外层 NSStatusItem 按系统菜单栏厚度 (22pt) 自动 fit.
-        .frame(minWidth: 36, idealWidth: 44, maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 1)
+        // 宽度贴合内容: 只保留 maxWidth 撑开, 不设 min/idealWidth——
+        // 固定 36~44pt 会让 "G 0" 这类短内容的块之间出现大片空白.
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

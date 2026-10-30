@@ -8,6 +8,15 @@ final class StatusBarViewTests: XCTestCase {
     // 改为: 把渲染逻辑抽成 pure helper (formatMetricText), 直接对 helper 单测.
     // 这里只验证 enabledMetrics 过滤顺序和 ∞ 文案.
 
+    func testAccountBadge() {
+        // 状态栏块首字母标识: 短名原样, 超长截前 3 字符, 空名回退 "?"
+        XCTAssertEqual(StatusBarViewHelper.accountBadge(displayTitle: "M1"), "M1")
+        XCTAssertEqual(StatusBarViewHelper.accountBadge(displayTitle: "G"), "G")
+        XCTAssertEqual(StatusBarViewHelper.accountBadge(displayTitle: "MiniMax 备用"), "Min")
+        XCTAssertEqual(StatusBarViewHelper.accountBadge(displayTitle: "  "), "?")
+        XCTAssertEqual(StatusBarViewHelper.accountBadge(displayTitle: ""), "?")
+    }
+
     func testEnabledMetricsFiltersAndOrders() {
         // 模拟数据: 5h, weekly_limit, mcp_monthly
         let metrics = [
