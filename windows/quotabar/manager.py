@@ -19,6 +19,11 @@ from .net import NetworkFunc, requests_network
 from .platforms.glm import GLMPlatformService
 from .platforms.minimax import MiniMaxPlatformService
 from .platforms.stepfun import StepFunPlatformService
+from .platforms.stepfun_refresh import (
+    needs_refresh,
+    parse_credential,
+    refresh_credential,
+)
 from .platforms.tokenrhythm import TokenRhythmPlatformService
 
 #: 平台 → service 工厂(对齐 Swift 版 PlatformManager.serviceFactory)
@@ -45,6 +50,8 @@ class PlatformManager:
         self._network = network or requests_network
         self._services: Dict[str, object] = {}
         self._lock = threading.Lock()
+        #: 每实例一把续期锁:并发 fetch_all 与单账号刷新不能对同一账号双发 RefreshToken
+        self._refresh_locks: Dict[str, threading.Lock] = {}
 
     def service_for(self, instance_id: str):
         """每实例一个 service 对象;缓存与在途状态按账号隔离"""
@@ -67,6 +74,10 @@ class PlatformManager:
             raise KeyError(f"实例不存在: {instance_id}")
         if not self._config.is_configured(instance_id):
             raise _not_configured(inst.platform_type)
+        # Stepfun 会话预刷新:access 票快过期时先换新凭据再发主请求。
+        # 刷新失败不阻断主流程,旧凭据若已失效会走既有 401 -> 重新登录提示。
+        if inst.platform_type == PlatformType.STEPFUN:
+            self._refresh_stepfun_if_needed(instance_id)
         cfg: PlatformConfigData = self._config.config_data(instance_id)
         return self.service_for(instance_id).fetch_usage(cfg, self._network)
 
@@ -97,10 +108,41 @@ class PlatformManager:
         except Exception as e:  # 未预期异常也兜住,不拖垮整批
             return FetchResult(instance_id=instance_id, error=_wrap_unexpected(e))
 
+    def _refresh_stepfun_if_needed(self, instance_id: str) -> None:
+        """Stepfun 自动续期:本地判断 exp,快过期才发 RefreshToken。
+
+        - 每实例一把锁:fetch_all 的线程池与单账号刷新可能同时进来,只发一次;
+        - 锁内重读凭据:别的线程可能已经刷新过,不必重复;
+        - CAS 写回:只有当前凭据仍是本次刷新用的旧串才落盘。用户在刷新在途时
+          保存了新凭据时,别人的更新优先,不能被旧凭据刷出的串覆盖。
+        """
+        credential = self._config.api_key(instance_id)
+        parsed = parse_credential(credential)
+        if not needs_refresh(parsed):
+            return
+        with self._lock:
+            lock = self._refresh_locks.setdefault(instance_id, threading.Lock())
+        with lock:
+            credential = self._config.api_key(instance_id)
+            parsed = parse_credential(credential)
+            if not needs_refresh(parsed):
+                return
+            fresh = refresh_credential(credential, self._network, parsed=parsed)
+            if not fresh:
+                return
+            try:
+                # 刷新期间的任何写入(换 key/重新登录)都优先于本次结果
+                if self._config.api_key(instance_id) == credential:
+                    self._config.set_api_key(instance_id, fresh)
+            except (OSError, TypeError, UnicodeEncodeError):
+                # 落盘失败:不阻断本次主请求;下次刷新会再试
+                pass
+
     def remove_instance(self, instance_id: str) -> None:
         """账号删除后清理其 service(连带缓存),防已删账号的对象常驻内存"""
         with self._lock:
             self._services.pop(instance_id, None)
+            self._refresh_locks.pop(instance_id, None)
 
     def clear_all_caches(self) -> None:
         """「立即刷新」入口:清所有实例缓存,下次取数强制走网络"""

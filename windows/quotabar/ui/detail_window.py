@@ -1,26 +1,39 @@
 # -*- coding: utf-8 -*-
-"""详情弹窗:账号切换 + 指标卡 + API Key 配置面板。
+"""详情弹窗:一次只看一个账号(点哪个看哪个) + 指标卡 + API Key 配置。
 
-功能语义对齐 macOS 版 Views/PopoverContentView,视觉与交互按 Windows 习惯:
-- 普通 QDialog(系统标题栏),弹出时落在屏幕右下角、贴近任务栏上沿
-- Qt 原生控件 + 默认外观,不自绘高亮/pill 效果
-- 文案一律走 i18n,数值/倒计时一律调 render.* 纯函数,UI 不自行计算
-- 取数全部经 TrayApp 的后台线程完成,本窗只读结果,不在 GUI 线程发请求
+视觉按 Windows 习惯重做:
+- 深/浅色卡片跟随 Windows 应用模式(不跟壁纸)
+- 账号切换条:彩色状态点 + 名称,点一下切换;标签可拖拽排序
+- 指标卡:标题 + 大号数值 + 重置倒计时 + 进度条
+- 错误态:直接给「重新登录」/「立即配置」按钮
 """
+
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Optional
 
-from PyQt5.QtCore import QMimeData, Qt, pyqtSignal
-from PyQt5.QtGui import QCursor, QGuiApplication, QDrag
+from PyQt5.QtCore import QMimeData, QSize, Qt, pyqtSignal
+from PyQt5.QtGui import (
+    QColor,
+    QCursor,
+    QDrag,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPalette,
+    QPixmap,
+)
 from PyQt5.QtWidgets import (
     QCheckBox,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -37,18 +50,13 @@ from ..models import (
     PlatformType,
     UsageMetric,
 )
+from .theme import palette, status_color
 
 if TYPE_CHECKING:  # 仅类型标注用,避免与 tray 模块形成导入环
     from .tray import TrayApp
 
 #: 弹窗固定宽度
 PANEL_WIDTH = 420
-
-#: 健康行配色(与托盘状态点同一套色板)
-_COLOR_GREEN = "#34C759"
-_COLOR_RED = "#FF3B30"
-_COLOR_ORANGE = "#FF9500"
-_COLOR_GRAY = "#8E8E93"
 
 #: 弹出定位留白:底边贴任务栏上沿(留 8),右侧离屏幕角留空一点(24)
 _MARGIN_BOTTOM = 8
@@ -69,14 +77,34 @@ def _clear_layout(layout) -> None:
             sub.deleteLater()
 
 
+def _dot_icon(color: str, size: int = 10) -> QIcon:
+    """账号切换条左侧的小状态点"""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(color))
+        painter.drawEllipse(1, 1, size - 2, size - 2)
+    finally:
+        painter.end()
+    return QIcon(pixmap)
+
+
 class DetailWindow(QDialog):
-    """QuotaBar 详情窗:账号切换、指标卡、凭据配置。"""
+    """QuotaBar 详情窗:单账号视图、账号切换、指标卡、凭据配置。"""
 
     def __init__(self, tray: "TrayApp", parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._tray = tray
         self._config = tray.config
         self._i18n = get_i18n()
+        self._pal = palette()
+        #: 当前查看的账号;点面板 chip 时由 open_detail_for 指定
+        self._selected_id: Optional[str] = None
+        #: 上次构建时的内容指纹:定时刷新时内容没变就不整窗重建(防闪)
+        self._view_sig = None
         # 视图状态:"main" 主视图 / "config" 配置面板
         self._mode = "main"
         self._config_instance_id: Optional[str] = None
@@ -85,44 +113,147 @@ class DetailWindow(QDialog):
         # 配置面板的「保存」按钮:输入框内容变化时同步启用/禁用
         self._save_button: Optional[QPushButton] = None
         self.setWindowTitle(self._i18n.t("app.name"))
-        # 置顶:普通窗口会被置顶应用(如 ZCode)盖住
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        # Qt.Tool:不出现在任务栏/Alt+Tab,但仍保留标题栏与关闭按钮。
+        # 普通 QDialog 会给任务栏多出一个按钮,用户反馈「怎么还出现个图标」。
+        self.setWindowFlags(
+            Qt.Tool
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowTitleHint
+            | Qt.WindowCloseButtonHint
+        )
         self.setAttribute(Qt.WA_ShowWithoutActivating, False)
+        # 顶层 QDialog 的 stylesheet 背景需要这个属性才会真正绘制;
+        # 同时显式设一套深/浅 palette,避免系统亮色 palette 在 stylesheet
+        # 未覆盖到的地方透出来(标签、输入框、默认背景)。
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(True)
+        self.setPalette(self._dialog_palette())
         self.setFixedWidth(PANEL_WIDTH)
         self._root = QVBoxLayout(self)
         self._root.setContentsMargins(12, 12, 12, 12)
-        self._root.setSpacing(8)
+        self._root.setSpacing(10)
+        self.setStyleSheet(self._stylesheet())
         self._build_ui()
+
+    # ------------------------------------------------------------ 样式
+
+    def _dialog_palette(self) -> QPalette:
+        p = self._pal
+        pal = QPalette()
+        pal.setColor(QPalette.Window, QColor(p.bg))
+        pal.setColor(QPalette.WindowText, QColor(p.text))
+        pal.setColor(QPalette.Base, QColor(p.card))
+        pal.setColor(QPalette.AlternateBase, QColor(p.bg))
+        pal.setColor(QPalette.Text, QColor(p.text))
+        pal.setColor(QPalette.Button, QColor(p.card))
+        pal.setColor(QPalette.ButtonText, QColor(p.text))
+        pal.setColor(QPalette.Highlight, QColor(p.accent))
+        pal.setColor(QPalette.HighlightedText, QColor("#FFFFFF"))
+        return pal
+
+    def _stylesheet(self) -> str:
+        p = self._pal
+        red = status_color("red", p.is_light)
+        return f"""
+        QDialog {{ background: {p.bg}; }}
+        QLabel {{ color: {p.text}; }}
+        QLabel#title {{ color: {p.text}; font-size: 15px; font-weight: 700; }}
+        QLabel#sectionTitle {{ color: {p.text}; font-size: 14px; font-weight: 700; }}
+        QLabel#muted {{ color: {p.muted}; font-size: 11px; }}
+        QLabel#metricLabel {{ color: {p.muted}; font-size: 11px; }}
+        QLabel#metricValue {{ color: {p.value}; font-size: 20px; font-weight: 700; }}
+        QLabel#metricCount {{ color: {p.muted}; font-size: 10px; }}
+        QLabel#health {{ font-size: 11px; font-weight: 600; }}
+        QFrame#metricCard {{
+            background: {p.card};
+            border: 1px solid {p.card_border};
+            border-radius: 9px;
+        }}
+        QFrame#errorCard {{
+            background: {p.card};
+            border: 1px solid {red};
+            border-radius: 9px;
+        }}
+        QPushButton {{
+            background: {p.card};
+            color: {p.text};
+            border: 1px solid {p.card_border};
+            border-radius: 7px;
+            padding: 5px 10px;
+        }}
+        QPushButton:hover {{ border-color: {p.accent}; }}
+        QPushButton:checked {{ background: {p.accent}; color: #FFFFFF; border-color: {p.accent}; }}
+        QPushButton#accountChip {{ border-radius: 11px; padding: 4px 9px; font-size: 11px; }}
+        QLineEdit {{
+            background: {p.card};
+            color: {p.text};
+            border: 1px solid {p.card_border};
+            border-radius: 6px;
+            padding: 5px;
+        }}
+        QProgressBar {{ background: {p.track}; border: none; border-radius: 2px; }}
+        QProgressBar::chunk {{ border-radius: 2px; }}
+        """
 
     # ------------------------------------------------------------ 公开接口
 
     def is_configuring(self) -> bool:
-        """当前是否停在配置面板"""
         return self._mode == "config"
 
     def reload(self) -> None:
-        """数据/配置/语言变化后整体重建(保留配置面板的已输内容)。
-
-        配置面板打开期间跳过重建:60 秒定时刷新会把输入框销毁重建,
-        粘 API key 时焦点丢失、明文开关被重置——配置完保存/取消自然会回主视图。
-        """
+        """数据/配置/语言变化后重建;内容没变就不动(防每分钟刷新闪一下)"""
         if self._mode == "config":
+            return
+        if self._view_sig is not None and self._view_sig == self._view_signature():
             return
         self._build_ui()
 
-    # ------------------------------------------------------------ 定位(Windows:贴屏幕右下角)
+    def show_account(self, instance_id: str) -> None:
+        """显示指定账号(点任务栏 chip 的入口)"""
+        if self._config.instance(instance_id) is None:
+            return
+        if self._mode == "config":
+            self._cancel_config()
+        self._selected_id = instance_id
+        self._mode = "main"
+        self._build_ui()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    # ------------------------------------------------------------ 定位
+
+    def paintEvent(self, event) -> None:
+        """强制自绘底色:不依赖原生样式是否吃 palette/stylesheet"""
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(self._pal.bg))
+        painter.end()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        if not self._pal.is_light:
+            from .winutil import set_dark_title_bar
+
+            set_dark_title_bar(int(self.winId()), True)
         self._move_to_bottom_right()
 
-    def _move_to_bottom_right(self) -> None:
-        """把窗口放到当前屏幕右下角、贴任务栏上沿。
+    def resizeEvent(self, event) -> None:
+        """窗口因切换账号变高/变矮后重新贴任务栏上沿。
 
-        Windows 拿不到托盘图标的几何位置,退而求其次:光标所在屏幕的右下角。
-        下界不用 availableGeometry(部分系统不会把任务栏让干净,窗口底边会被压住),
-        直接取任务栏(Shell_TrayWnd)的真实上沿;拿不到再退回 availableGeometry。
+        在 resize 事件里做,此时 height() 已经是新值;放在 _build_ui 里同步
+        move 会用到旧高度,把窗口算到任务栏下面。
         """
+        super().resizeEvent(event)
+        if self.isVisible() and not getattr(self, "_repositioning", False):
+            self._repositioning = True
+            try:
+                self._move_to_bottom_right()
+            finally:
+                self._repositioning = False
+
+    def _move_to_bottom_right(self) -> None:
         screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         if screen is None:
             return
@@ -130,16 +261,25 @@ class DetailWindow(QDialog):
         bottom_limit = self._taskbar_top_edge(screen)
         if bottom_limit is None:
             bottom_limit = geo.bottom()
-        # 注意用 frameGeometry(整窗框,含标题栏+边框):move() 定位的是窗框左上角,
-        # 用客户区 height() 会恒差一个标题栏高度,导致底边压进任务栏
-        frame = self.frameGeometry()
-        x = geo.right() - frame.width() - _MARGIN_RIGHT
-        y = bottom_limit - frame.height() - _MARGIN_BOTTOM
-        self.move(max(geo.left(), x), max(geo.top(), y))
+        # 用「客户区尺寸 + 原生边框」算整窗尺寸,不要用 frameGeometry():
+        # 刚刚 adjustSize 后 frameGeometry 可能还是旧的,会把窗口算到任务栏下面。
+        margins = None
+        if self.windowHandle() is not None:
+            margins = self.windowHandle().frameMargins()
+        if margins is not None and (margins.top() or margins.bottom()):
+            frame_w = self.width() + margins.left() + margins.right()
+            frame_h = self.height() + margins.top() + margins.bottom()
+        else:
+            frame = self.frameGeometry()
+            frame_w, frame_h = frame.width(), frame.height()
+        x = geo.right() - frame_w - _MARGIN_RIGHT
+        y = bottom_limit - frame_h - _MARGIN_BOTTOM
+        # 内容比可用高度还高时先贴顶,至少标题栏和顶部内容可见
+        y = max(geo.top() + 4, y)
+        self.move(max(geo.left(), x), y)
 
     @staticmethod
     def _taskbar_top_edge(screen) -> Optional[int]:
-        """底部任务栏的上沿坐标(委托 winutil 共用实现)"""
         from .winutil import taskbar_top_edge
 
         return taskbar_top_edge(screen.geometry())
@@ -147,14 +287,54 @@ class DetailWindow(QDialog):
     # ------------------------------------------------------------ 整体构建
 
     def _build_ui(self) -> None:
-        """按当前视图模式重建整窗内容(配置面板输入已存成员变量,不丢)"""
-        _clear_layout(self._root)
-        self._save_button = None
-        if self._mode == "config":
-            self._build_config_view()
-        else:
-            self._build_main_view()
-        self.adjustSize()
+        # 整窗重建期间关掉刷新,一次画完再开:否则切账号时能看到中间态闪烁
+        self.setUpdatesEnabled(False)
+        try:
+            _clear_layout(self._root)
+            self._save_button = None
+            if self._mode == "config":
+                self._build_config_view()
+            else:
+                self._ensure_selected()
+                self._build_main_view()
+            # 先让布局算完新尺寸再 adjustSize:否则 height() 还是旧值,
+            # 按旧高度定位会把窗口算到任务栏下面
+            self._root.invalidate()
+            self._root.activate()
+            self.adjustSize()
+            self._view_sig = self._view_signature()
+            # 位置由 resizeEvent 在窗口真正变高后校正;这里不提前 move,
+            # 否则 height() 还是旧值,会把窗口算到任务栏下面
+        finally:
+            self.setUpdatesEnabled(True)
+        self.update()
+
+    def _view_signature(self):
+        """详情窗当前内容指纹:用于跳过无变化的整窗重建。"""
+        inst = self._selected_instance()
+        if inst is None:
+            return ("no-account", self._mode, self._i18n.locale)
+        data = self._tray.data(inst.id)
+        error = self._tray.error(inst.id)
+        metrics = tuple(
+            (m.label, m.current_value, m.total_value, m.unit, m.reset_time)
+            for m in (data.metrics if data else [])
+        )
+        return (
+            self._mode,
+            self._selected_id,
+            inst.display_name,
+            inst.platform_type.value,
+            self._i18n.locale,
+            self._config.display_mode(),
+            self._config.is_configured(inst.id),
+            data.is_healthy if data else None,
+            metrics,
+            error.kind.value if error else None,
+            error.message if error else None,
+            # 倒计时按分钟走:同一分钟内无变化不重建,跨分钟才刷新文案
+            int(time.time() // 60),
+        )
 
     def _build_main_view(self) -> None:
         self._root.addWidget(self._build_header())
@@ -162,52 +342,69 @@ class DetailWindow(QDialog):
         self._root.addWidget(self._build_content())
         self._root.addWidget(self._build_footer())
 
+    def _ensure_selected(self) -> None:
+        enabled = [i for i in self._config.instances() if self._config.is_enabled(i.id)]
+        ids = {i.id for i in enabled}
+        if self._selected_id in ids:
+            return
+        active = self._config.active_instance_id()
+        self._selected_id = active if active in ids else (enabled[0].id if enabled else None)
+
+    def _selected_instance(self) -> Optional[PlatformInstance]:
+        self._ensure_selected()
+        if self._selected_id is None:
+            return None
+        return self._config.instance(self._selected_id)
+
     # ------------------------------------------------------------ 头部
 
     def _build_header(self) -> QWidget:
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         title = QLabel(self._i18n.t("app.name"))
-        font = title.font()
-        font.setBold(True)
-        title.setFont(font)
+        title.setObjectName("title")
         row.addWidget(title)
         row.addStretch(1)
-        active_id = self._config.active_instance_id()
-        if active_id and self._tray.is_loading(active_id):
+        if self._selected_id and self._tray.is_loading(self._selected_id):
             loading = QLabel("…")
-            loading.setStyleSheet(f"color: {_COLOR_GRAY};")
+            loading.setObjectName("muted")
             row.addWidget(loading)
         box = QWidget()
         box.setLayout(row)
         return box
 
-    # ------------------------------------------------------------ 账号切换区
+    # ------------------------------------------------------------ 账号切换
 
     def _build_account_switcher(self) -> QWidget:
-        """账号切换区:标签可**拖拽排序**(按住标签拖到另一个标签上松手即交换顺序)。
-
-        只列启用中的账号(与 macOS 弹窗一致)。
-        """
+        """账号切换条:点一下切换;按住标签拖到另一个上可交换顺序。"""
         self._reorder_area = _ReorderArea(self)
         self._reorder_area.reorder_requested.connect(self._reorder)
-        row = QHBoxLayout()
+        row = self._reorder_area.layout()
         row.setContentsMargins(0, 0, 0, 0)
-        active_id = self._config.active_instance_id()
+        row.setSpacing(6)
+        selected = self._selected_id or self._config.active_instance_id()
         for inst in self._config.instances():
             if not self._config.is_enabled(inst.id):
                 continue
             btn = _ReorderButton(inst.id, inst.display_name)
+            btn.setObjectName("accountChip")
             btn.setCheckable(True)
-            btn.setChecked(inst.id == active_id)
+            btn.setChecked(inst.id == selected)
+            btn.setIcon(_dot_icon(self._account_color(inst)))
+            btn.setIconSize(QSize(8, 8))
             btn.setToolTip(self._i18n.t("detail.dragToReorder"))
             btn.clicked.connect(lambda checked=False, iid=inst.id: self._switch_account(iid))
-            self._reorder_area.layout().addWidget(btn)
-        self._reorder_area.layout().addStretch(1)  # 账号多时允许横向挤压
+            row.addWidget(btn)
+        row.addStretch(1)
         return self._reorder_area
 
+    def _account_color(self, inst: PlatformInstance) -> str:
+        data = self._tray.data(inst.id)
+        if data is None and self._tray.error(inst.id) is not None:
+            return status_color("red", self._pal.is_light)
+        return status_color(render.status_color(data), self._pal.is_light)
+
     def _reorder(self, source_id: str, target_id: str) -> None:
-        """把 source 账号移动到 target 的位置(拖拽排序)"""
         ids = [i.id for i in self._config.instances()]
         if source_id not in ids or target_id not in ids or source_id == target_id:
             return
@@ -216,61 +413,74 @@ class DetailWindow(QDialog):
         with self._tray._config_write() as st:
             self._config.reorder_instances(ids)
         if not st.ok:
-            return  # 落盘失败:配置已回滚,界面保持原序
+            return
         self._build_ui()
-        # 通知托盘:面板账号块与 tooltip 的顺序也要跟着变(否则要等下个刷新周期)
         self._tray._on_config_changed()
 
     def _switch_account(self, instance_id: str) -> None:
+        if self._config.instance(instance_id) is None:
+            return
+        previous = self._selected_id
+        self._selected_id = instance_id
         with self._tray._config_write() as st:
             self._config.set_active_instance_id(instance_id)
         if not st.ok:
-            # 落盘失败:激活账号没改,但按钮已被点击置成勾选态——重建回原状
+            self._selected_id = previous
             self._build_ui()
             return
-        # 新激活账号还没有数据时立刻后台拉一次,避免长时间显示空态
         if self._config.is_configured(instance_id) and self._tray.data(instance_id) is None:
             self._tray.fetch_instance_async(instance_id)
         self._build_ui()
 
-    # ------------------------------------------------------------ 主体内容
+    # ------------------------------------------------------------ 主体
 
     def _build_content(self) -> QWidget:
         box = QWidget()
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        # 显示**全部**启用账号(不只是激活的那个)——悬停浮窗会被置顶窗口盖住,
-        # 点开详情是可靠的全量视图
-        instances = [i for i in self._config.instances() if self._config.is_enabled(i.id)]
-        if not instances:
+        layout.setSpacing(10)
+        inst = self._selected_instance()
+        if inst is None:
             self._fill_no_accounts(layout)
-            return box
-
-        shown = False
-        for index, inst in enumerate(instances):
-            if index:
-                layout.addSpacing(10)
+        else:
             self._fill_account_section(layout, inst)
-            shown = True
-        if not shown:
-            self._fill_no_accounts(layout)
         return box
 
     def _fill_account_section(self, layout: QVBoxLayout, inst: PlatformInstance) -> None:
-        """一个账号的一段:标题 + 指标卡 + 错误/空态"""
-        title = QLabel(inst.display_name)
-        font = title.font()
-        font.setBold(True)
-        title.setFont(font)
-        layout.addWidget(title)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        dot = QLabel("●")
+        dot.setStyleSheet(f"color: {self._account_color(inst)}; font-size: 12px;")
+        header.addWidget(dot)
+        name = QLabel(inst.display_name)
+        name.setObjectName("sectionTitle")
+        header.addWidget(name)
+        platform = QLabel(inst.platform_type.display_name())
+        platform.setObjectName("muted")
+        header.addWidget(platform)
+        header.addStretch(1)
+
+        data = self._tray.data(inst.id)
+        error = self._tray.error(inst.id)
+        if error is not None and data is None:
+            state = QLabel(self._error_text(error, inst.platform_type))
+            state.setObjectName("muted")
+            state.setStyleSheet(f"color: {status_color('red', self._pal.is_light)};")
+            header.addWidget(state)
+        elif data is not None:
+            state = QLabel(
+                self._i18n.t("popover.normal" if data.is_healthy else "popover.low")
+            )
+            state.setStyleSheet(
+                f"color: {status_color('green' if data.is_healthy else 'red', self._pal.is_light)};"
+                " font-weight: 600;"
+            )
+            header.addWidget(state)
+        layout.addLayout(header)
 
         if not self._config.is_configured(inst.id):
             self._fill_unconfigured(layout, inst)
             return
-        data = self._tray.data(inst.id)
-        error = self._tray.error(inst.id)
         if data is not None and data.metrics:
             self._fill_metrics(layout, data, error)
         elif error is not None:
@@ -280,95 +490,144 @@ class DetailWindow(QDialog):
         else:
             self._fill_no_data(layout)
 
-    def _fill_no_accounts(self, layout: QVBoxLayout) -> None:
-        """一个账号都没有:提示去托盘菜单添加"""
-        label = QLabel(self._i18n.t("popover.selectPlatforms"))
-        font = label.font()
-        font.setBold(True)
-        label.setFont(font)
-        layout.addWidget(label)
-
-    def _fill_unconfigured(self, layout: QVBoxLayout, inst: PlatformInstance) -> None:
-        title = QLabel(self._i18n.t("popover.platformNotConfigured", inst.display_name))
-        font = title.font()
-        font.setBold(True)
-        title.setFont(font)
-        title.setWordWrap(True)
-        layout.addWidget(title)
-        btn = QPushButton(self._i18n.t("popover.configureNow"))
-        btn.clicked.connect(lambda checked=False, iid=inst.id: self._open_config(iid))
-        layout.addWidget(btn)
-
     def _fill_metrics(self, layout: QVBoxLayout, data, error: Optional[PlatformError]) -> None:
-        """指标卡:全量展示,不过滤(对齐 macOS 弹窗口径)"""
-        for metric in data.metrics:
-            layout.addWidget(self._build_metric_card(metric))
-        # 健康行只按数据本身的健康度判定(对齐 macOS 弹窗与任务栏面板口径):
-        # 「最近一次刷新失败」是另一回事,由下面的橙色陈旧提示单独表达,
-        # 混进健康行会让面板显示绿点、详情窗却写"状态异常",两边自相矛盾。
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+        metrics = data.metrics
+        for index, metric in enumerate(metrics):
+            card = self._build_metric_card(metric)
+            row, col = divmod(index, 2)
+            span = 2 if (len(metrics) == 1 or (index == len(metrics) - 1 and col == 0)) else 1
+            grid.addWidget(card, row, col, 1, span)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        wrapper = QWidget()
+        wrapper.setLayout(grid)
+        layout.addWidget(wrapper)
+
+        health_row = QHBoxLayout()
+        health_row.setContentsMargins(0, 0, 0, 0)
         healthy = data.is_healthy
-        text = self._i18n.t("popover.normal") if healthy else self._i18n.t("popover.low")
-        health = QLabel(text)
-        health.setStyleSheet(f"color: {_COLOR_GREEN if healthy else _COLOR_RED}; font-weight: bold;")
-        layout.addWidget(health)
+        dot = QLabel("●")
+        dot.setStyleSheet(
+            f"color: {status_color('green' if healthy else 'red', self._pal.is_light)}; font-size: 11px;"
+        )
+        health_row.addWidget(dot)
+        health = QLabel(self._i18n.t("popover.normal") if healthy else self._i18n.t("popover.low"))
+        health.setObjectName("health")
+        health.setStyleSheet(
+            f"color: {status_color('green' if healthy else 'red', self._pal.is_light)};"
+        )
+        health_row.addWidget(health)
+        health_row.addStretch(1)
+        layout.addLayout(health_row)
+
         if error is not None:
-            # 有旧数据但最近一次刷新失败:提示当前数值可能不是最新
             stale = QLabel(self._i18n.t("popover.staleData"))
-            stale.setStyleSheet(f"color: {_COLOR_ORANGE};")
+            stale.setObjectName("muted")
+            stale.setStyleSheet(f"color: #FF9500;")
             stale.setWordWrap(True)
             layout.addWidget(stale)
 
     def _build_metric_card(self, metric: UsageMetric) -> QWidget:
         card = QFrame()
-        card.setFrameShape(QFrame.StyledPanel)
+        card.setObjectName("metricCard")
         v = QVBoxLayout(card)
-        v.setContentsMargins(8, 8, 8, 8)
-        v.setSpacing(2)
+        v.setContentsMargins(10, 8, 10, 8)
+        v.setSpacing(4)
 
         key = f"metric.{metric.label}"
-        title = self._i18n.t(key)
-        if title == key:  # 未命中 i18n key 时回退原始 label
-            title = metric.label
-        head = QLabel(title)
-        head.setStyleSheet(f"color: {_COLOR_GRAY};")
-        v.addWidget(head)
+        title_text = self._i18n.t(key)
+        if title_text == key:
+            title_text = metric.label
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        title = QLabel(title_text)
+        title.setObjectName("metricLabel")
+        title.setWordWrap(True)
+        top.addWidget(title, 1)
+        hint = ""
+        if metric.unit == "%" and metric.label != LABEL_WEEKLY_UNLIMITED:
+            hint = self._i18n.t(
+                "popover.used" if self._config.display_mode() == "used" else "popover.remaining"
+            )
+        elif metric.total_value is not None and metric.total_value > 0:
+            hint = self._i18n.t("popover.remaining")
+        if hint:
+            hint_label = QLabel(hint)
+            hint_label.setObjectName("metricCount")
+            top.addWidget(hint_label, 0, Qt.AlignRight | Qt.AlignTop)
+        v.addLayout(top)
 
-        value = QLabel(self._metric_value_text(metric))
-        font = value.font()
-        font.setBold(True)
-        font.setPointSize(font.pointSize() + 2)
-        value.setFont(font)
+        value_text, ratio = self._metric_card_value(metric)
+        value_color = self._pal.value
+        if ratio is not None:
+            if ratio < 0.1:
+                value_color = status_color("red", self._pal.is_light)
+            elif ratio < 0.5:
+                value_color = status_color("yellow", self._pal.is_light)
+        value = QLabel(value_text)
+        value.setObjectName("metricValue")
+        size = 20 if len(value_text) <= 9 else 15
+        value.setStyleSheet(f"font-size: {size}px; font-weight: 700; color: {value_color};")
         v.addWidget(value)
 
         if metric.reset_time is not None:
             countdown = QLabel(self._reset_countdown_text(metric))
-            countdown.setStyleSheet(f"color: {_COLOR_GRAY};")
+            countdown.setObjectName("metricCount")
+            countdown.setWordWrap(True)
             v.addWidget(countdown)
+
+        if ratio is not None and metric.unit == "%" and metric.label != LABEL_WEEKLY_UNLIMITED:
+            shown = ratio if self._config.display_mode() == "remaining" else 1.0 - ratio
+            bar = QProgressBar()
+            bar.setRange(0, 1000)
+            bar.setValue(max(0, min(1000, int(shown * 1000))))
+            bar.setFixedHeight(4)
+            bar.setTextVisible(False)
+            bar.setStyleSheet(
+                f"QProgressBar {{ background: {self._pal.track}; border: none;"
+                " border-radius: 2px; }"
+                f"QProgressBar::chunk {{ background: {value_color}; border-radius: 2px; }}"
+            )
+            v.addWidget(bar)
+        elif ratio is not None and metric.unit == "times":
+            bar = QProgressBar()
+            bar.setRange(0, 1000)
+            bar.setValue(max(0, min(1000, int(ratio * 1000))))
+            bar.setFixedHeight(4)
+            bar.setTextVisible(False)
+            bar.setStyleSheet(
+                f"QProgressBar {{ background: {self._pal.track}; border: none;"
+                " border-radius: 2px; }"
+                f"QProgressBar::chunk {{ background: {value_color}; border-radius: 2px; }}"
+            )
+            v.addWidget(bar)
         return card
 
-    def _metric_value_text(self, metric: UsageMetric) -> str:
-        """指标数值:一律调 render.*;无限套餐与状态栏同口径显示 ∞
-
-        百分比型与次数型带「剩余: 」前缀(对齐 macOS 弹窗);余额型无 total,不加前缀。
-        """
+    def _metric_card_value(self, metric: UsageMetric) -> tuple[str, Optional[float]]:
+        """(卡片大号数值, 剩余比例用于进度条/配色)"""
         if metric.unit == "unlimited" or metric.label == LABEL_WEEKLY_UNLIMITED:
-            return render.tray_text(metric, self._config.display_mode())
-        text = render.metric_detail_text(metric, self._i18n.locale)
-        if metric.unit == "%" or (metric.total_value is not None and metric.total_value > 0):
-            return f"{self._i18n.t('popover.remaining')}: {text}"
-        return text
+            return "∞", None
+        ratio = render.metric_ratio(metric)
+        if metric.unit == "%":
+            number = render.tray_text(metric, self._config.display_mode())
+            return f"{number}%", ratio
+        if metric.unit == "times":
+            return render.metric_detail_text(metric, self._i18n.locale), ratio
+        return render.metric_detail_text(metric, self._i18n.locale), None
 
     def _reset_countdown_text(self, metric: UsageMetric) -> str:
-        """重置/到期倒计时:kind 由 render.reset_countdown 判定,文案走 i18n"""
         kind, payload = render.reset_countdown(metric.reset_time)
         if kind == "days":
-            # 跨天:weekly.reset.remaining 自带"%d天%d小时后重置"完整语义,不再加前缀
             days, hours = payload
             return self._i18n.t("weekly.reset.remaining", days, hours)
         prefix = self._i18n.t("popover.expiry" if metric.label == LABEL_BALANCE else "popover.reset")
         if kind == "soon":
             body = self._i18n.t("daily.reset.soon")
-        else:  # hm
+        else:
             hours, minutes = payload
             if hours > 0:
                 body = self._i18n.t("daily.reset.remaining", hours, minutes)
@@ -376,16 +635,68 @@ class DetailWindow(QDialog):
                 body = self._i18n.t("daily.reset.minutesonly", minutes)
         return f"{prefix}: {body}"
 
+    # ------------------------------------------------------------ 空态/错误
+
+    def _fill_no_accounts(self, layout: QVBoxLayout) -> None:
+        label = QLabel(self._i18n.t("popover.selectPlatforms"))
+        label.setObjectName("sectionTitle")
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+    def _fill_unconfigured(self, layout: QVBoxLayout, inst: PlatformInstance) -> None:
+        title = QLabel(self._i18n.t("popover.platformNotConfigured", inst.display_name))
+        title.setObjectName("sectionTitle")
+        title.setWordWrap(True)
+        layout.addWidget(title)
+        btn = QPushButton(self._i18n.t("popover.configureNow"))
+        btn.clicked.connect(lambda checked=False, iid=inst.id: self._open_config(iid))
+        layout.addWidget(btn)
+
     def _fill_error(self, layout: QVBoxLayout, error: PlatformError, inst: PlatformInstance) -> None:
+        card = QFrame()
+        card.setObjectName("errorCard")
+        v = QVBoxLayout(card)
+        v.setContentsMargins(10, 8, 10, 8)
+        v.setSpacing(6)
         head = QLabel(self._i18n.t("popover.error"))
-        head.setStyleSheet(f"color: {_COLOR_RED}; font-weight: bold;")
-        layout.addWidget(head)
+        head.setStyleSheet(
+            f"color: {status_color('red', self._pal.is_light)}; font-weight: 700;"
+        )
+        v.addWidget(head)
         body = QLabel(self._error_text(error, inst.platform_type))
+        body.setWordWrap(True)
+        v.addWidget(body)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        if inst.platform_type.cookie_based():
+            relogin = QPushButton(self._i18n.t("popover.renewSession"))
+            relogin.clicked.connect(
+                lambda checked=False, iid=inst.id: self._begin_relogin(iid)
+            )
+            actions.addWidget(relogin)
+        configure = QPushButton(self._i18n.t("popover.configureNow"))
+        configure.clicked.connect(lambda checked=False, iid=inst.id: self._open_config(iid))
+        actions.addWidget(configure)
+        actions.addStretch(1)
+        v.addLayout(actions)
+        layout.addWidget(card)
+
+    def _fill_loading(self, layout: QVBoxLayout) -> None:
+        loading = QLabel("…")
+        loading.setAlignment(Qt.AlignCenter)
+        loading.setObjectName("muted")
+        layout.addWidget(loading)
+
+    def _fill_no_data(self, layout: QVBoxLayout) -> None:
+        head = QLabel(self._i18n.t("popover.noData"))
+        head.setObjectName("sectionTitle")
+        layout.addWidget(head)
+        body = QLabel(self._i18n.t("error.invalidResponse"))
+        body.setObjectName("muted")
         body.setWordWrap(True)
         layout.addWidget(body)
 
     def _error_text(self, error: PlatformError, platform: PlatformType) -> str:
-        """错误文案:未授权按凭据类型分派;其余先试 i18n key,再按 kind 取通用文案"""
         i18n = self._i18n
         if error.kind == ErrorKind.UNAUTHORIZED:
             if platform.cookie_based():
@@ -393,7 +704,7 @@ class DetailWindow(QDialog):
             return i18n.t("error.unauthorized.key")
         translated = i18n.t(error.message)
         if translated != error.message:
-            return translated  # message 本身就是 i18n key(如 error.glm.emptyLimits)
+            return translated
         kind_keys = {
             ErrorKind.NOT_CONFIGURED: ("error.notConfigured", ()),
             ErrorKind.INVALID_RESPONSE: ("error.invalidResponse", ()),
@@ -407,21 +718,7 @@ class DetailWindow(QDialog):
             return i18n.t(key, *args)
         return error.message
 
-    def _fill_loading(self, layout: QVBoxLayout) -> None:
-        loading = QLabel("…")
-        loading.setAlignment(Qt.AlignCenter)
-        layout.addWidget(loading)
-
-    def _fill_no_data(self, layout: QVBoxLayout) -> None:
-        head = QLabel(self._i18n.t("popover.noData"))
-        head.setStyleSheet(f"color: {_COLOR_GRAY}; font-weight: bold;")
-        layout.addWidget(head)
-        body = QLabel(self._i18n.t("error.invalidResponse"))
-        body.setStyleSheet(f"color: {_COLOR_GRAY};")
-        body.setWordWrap(True)
-        layout.addWidget(body)
-
-    # ------------------------------------------------------------ 底部按钮
+    # ------------------------------------------------------------ 底部
 
     def _build_footer(self) -> QWidget:
         row = QHBoxLayout()
@@ -429,11 +726,17 @@ class DetailWindow(QDialog):
         refresh = QPushButton(self._i18n.t("menu.refreshNow"))
         refresh.clicked.connect(self._tray.fetch_all_async)
         row.addWidget(refresh)
-        active_id = self._config.active_instance_id()
+        inst = self._selected_instance()
         configure = QPushButton(self._i18n.t("menu.configurePlatform"))
-        configure.setEnabled(bool(active_id))
-        configure.clicked.connect(lambda checked=False, iid=active_id: self._open_config(iid))
+        configure.setEnabled(inst is not None)
+        configure.clicked.connect(
+            lambda checked=False, iid=inst.id if inst else None: self._open_config(iid)
+        )
         row.addWidget(configure)
+        if inst is not None and inst.platform_type.cookie_based():
+            renew = QPushButton(self._i18n.t("popover.renewSession"))
+            renew.clicked.connect(lambda checked=False, iid=inst.id: self._begin_relogin(iid))
+            row.addWidget(renew)
         row.addStretch(1)
         box = QWidget()
         box.setLayout(row)
@@ -443,7 +746,7 @@ class DetailWindow(QDialog):
 
     def _build_config_view(self) -> None:
         inst = self._config.instance(self._config_instance_id) if self._config_instance_id else None
-        if inst is None:  # 配置对象没了(被删):退回主视图
+        if inst is None:
             self._mode = "main"
             self._build_main_view()
             return
@@ -451,9 +754,7 @@ class DetailWindow(QDialog):
         title_key, placeholder_key = _config_i18n_keys(inst.platform_type)
 
         title = QLabel(i18n.t(title_key, inst.display_name))
-        font = title.font()
-        font.setBold(True)
-        title.setFont(font)
+        title.setObjectName("sectionTitle")
         title.setWordWrap(True)
         self._root.addWidget(title)
 
@@ -476,7 +777,6 @@ class DetailWindow(QDialog):
 
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
-        # cookie 型平台:给「浏览器登录取凭据」入口(免去手抄 cookie)
         if inst.platform_type.cookie_based():
             browser_btn = QPushButton(i18n.t("login.browser"))
             browser_btn.setToolTip(i18n.t("login.hint"))
@@ -493,44 +793,35 @@ class DetailWindow(QDialog):
         buttons.addWidget(save)
         buttons.addStretch(1)
         self._root.addLayout(buttons)
-        # 记住保存按钮:输入框清空后要同步禁用,否则点了没反应又没有任何提示
         self._save_button = save
 
-    def _open_login(self, platform: PlatformType) -> None:
-        """打开系统浏览器登录,登录完成后把凭据填进配置框。
+    def _begin_relogin(self, instance_id: str) -> None:
+        """错误态的「重新登录」:进配置面板并直接开浏览器登录"""
+        inst = self._config.instance(instance_id)
+        if inst is None:
+            return
+        self._open_config(instance_id)
+        self._open_login(inst.platform_type)
 
-        用系统浏览器(Edge/Chrome):内置 WebEngine 的 Chromium 太旧(87 版),
-        现代站点渲染不出来,所以直接走系统浏览器 + CDP 取 cookie。
-        """
+    def _open_login(self, platform: PlatformType) -> None:
         from .browser_login import BrowserLoginSession, find_browser
 
         i18n = self._i18n
         if find_browser() is None:
-            # 没有可用的系统浏览器:提示手动粘贴 cookie
-            QMessageBox.warning(
-                self,
-                i18n.t("app.name"),
-                i18n.t("login.noBrowser"),
-            )
+            QMessageBox.warning(self, i18n.t("app.name"), i18n.t("login.noBrowser"))
             return
 
         session = BrowserLoginSession(platform)
         if not session.start():
             session.close()
-            QMessageBox.warning(
-                self,
-                i18n.t("app.name"),
-                i18n.t("login.noBrowser"),
-            )
+            QMessageBox.warning(self, i18n.t("app.name"), i18n.t("login.noBrowser"))
             return
 
         dlg = _WaitLoginDialog(self, platform.display_name())
         accepted = False
         credential = None
         try:
-            # 用户在浏览器里登录完,回这里点「完成并提取」
             accepted = dlg.exec_() == QDialog.Accepted
-            # 只有点「完成并提取」才提取:点了「取消」还去收割 cookie 是越界
             if accepted:
                 credential = session.credential()
         finally:
@@ -541,7 +832,6 @@ class DetailWindow(QDialog):
             self._api_key_text = credential
             self._build_ui()
         else:
-            # 没登录 / CDP 拿不到:必须说一声,否则用户以为按钮坏了
             QMessageBox.warning(
                 self,
                 i18n.t("login.missing.title"),
@@ -551,6 +841,7 @@ class DetailWindow(QDialog):
     def _open_config(self, instance_id: Optional[str]) -> None:
         if not instance_id:
             return
+        self._selected_id = instance_id
         self._config_instance_id = instance_id
         self._api_key_text = self._config.api_key(instance_id)
         self._mode = "config"
@@ -568,7 +859,6 @@ class DetailWindow(QDialog):
         self._api_key_text = ""
         self._build_ui()
         if instance_id:
-            # 新建账号在配置前取消 → 交给托盘回收空壳账号(对齐 macOS)
             self._tray._on_config_cancelled(instance_id)
 
     def _save_config(self) -> None:
@@ -577,7 +867,6 @@ class DetailWindow(QDialog):
         if not instance_id or not key:
             return
         if self._config.instance(instance_id) is None:
-            # 配置面板开着时账号被删了:别给已删的 id 写凭据(会留下孤儿凭据)
             self._mode = "main"
             self._config_instance_id = None
             self._api_key_text = ""
@@ -586,8 +875,6 @@ class DetailWindow(QDialog):
         try:
             self._config.set_api_key(instance_id, key)
         except (OSError, TypeError, UnicodeEncodeError) as e:
-            # 落盘失败:凭据没存上,必须告诉用户,否则重启后凭据凭空消失
-            # (UnicodeEncodeError 是 ValueError 子类:剪贴板里截断的 emoji 会带代理字符)
             QMessageBox.warning(
                 self,
                 self._i18n.t("app.name"),
@@ -595,19 +882,14 @@ class DetailWindow(QDialog):
             )
             return
         self._tray._on_config_saved(instance_id)
-        # 换 key 后立刻清该实例缓存并后台拉取(不清则旧账号数据还会残留一个缓存窗口)
         self._tray.refresh_instance(instance_id)
+        self._selected_id = instance_id
         self._mode = "main"
         self._config_instance_id = None
         self._api_key_text = ""
         self._build_ui()
 
     def reject(self) -> None:
-        """ESC / 点 X 关窗:配置模式下等价于「取消」
-
-        不接管的话,ESC 走 QDialog 默认 reject,配置面板里的输入被丢掉,
-        新建的空壳账号也不会被回收(菜单里留下幽灵账号)。
-        """
         if self._mode == "config":
             self._cancel_config()
             return
@@ -676,7 +958,6 @@ class _WaitLoginDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 16)
         label = QLabel(i18n.t("login.browserHint"))
         label.setWordWrap(True)
-        label.setStyleSheet("font-size:13px;")
         layout.addWidget(label)
         row = QHBoxLayout()
         row.addStretch(1)
@@ -692,7 +973,6 @@ class _WaitLoginDialog(QDialog):
 
 
 def _config_i18n_keys(platform: PlatformType) -> tuple[str, str]:
-    """配置面板标题/占位文案的 key:TokenRhythm/Stepfun 用变体,其余用通用 API Key 文案"""
     if platform == PlatformType.TOKENRHYTHM:
         return "popover.configurePlatform.tokenrhythm", "popover.inputPlaceholder.tokenrhythm"
     if platform == PlatformType.STEPFUN:

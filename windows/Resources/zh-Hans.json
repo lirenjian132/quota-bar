@@ -132,5 +132,9 @@
   "menu.trayTooltipMore": "…共 %d 个账号",
   "detail.hourShort": "时",
   "detail.minuteShort": "分",
-  "detail.dayShort": "天"
+  "detail.dayShort": "天",
+  "popover.used": "已用",
+  "menu.details": "查看详情",
+  "menu.accounts": "账号",
+  "menu.settings": "设置"
 }

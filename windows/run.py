@@ -87,10 +87,15 @@ def main() -> int:
     from quotabar.config import ConfigService
     from quotabar.i18n import get_i18n
     from quotabar.manager import PlatformManager
+    from quotabar.ui.theme import apply_application_palette
     from quotabar.ui.tray import TrayApp
 
     app = QApplication(sys.argv)
     app.setApplicationName("QuotaBar")
+    # Fusion + 统一 palette:Windows 原生样式在部分控件上不吃自定义配色,
+    # 会出现深色面板配浅色详情窗。Fusion 对 palette/stylesheet 更一致。
+    app.setStyle("Fusion")
+    apply_application_palette(app)
     # 详情窗关了不退程序:托盘常驻
     app.setQuitOnLastWindowClosed(False)
 

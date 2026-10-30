@@ -45,8 +45,8 @@ def filter_metrics(metrics: list[UsageMetric], enabled_labels: list[str]) -> lis
     return metrics[:2]
 
 
-def _ratio(metric: UsageMetric) -> Optional[float]:
-    """剩余比例(0~1);无 total 的绝对量型返回 None"""
+def metric_ratio(metric: UsageMetric) -> Optional[float]:
+    """剩余比例(0~1);无 total 的绝对量型返回 None。UI 画进度条用。"""
     if metric.total_value is None or metric.total_value <= 0:
         return None
     ratio = metric.current_value / metric.total_value
@@ -55,6 +55,10 @@ def _ratio(metric: UsageMetric) -> Optional[float]:
     if not math.isfinite(ratio):
         return None
     return ratio
+
+
+#: 内部旧名保留(其它模块仍在用)
+_ratio = metric_ratio
 
 
 def _safe_int(value: float) -> Optional[int]:

@@ -17,9 +17,24 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Callable, Optional
 
-from PyQt5.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
-from PyQt5.QtGui import QColor, QCursor, QDesktopServices, QIcon, QPainter, QPixmap
-from PyQt5.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QSystemTrayIcon
+from PyQt5.QtCore import QObject, QPoint, Qt, QTimer, QUrl, pyqtSignal
+from PyQt5.QtGui import (
+    QColor,
+    QCursor,
+    QDesktopServices,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPixmap,
+)
+from PyQt5.QtWidgets import (
+    QApplication,
+    QInputDialog,
+    QMenu,
+    QMessageBox,
+    QStyle,
+    QSystemTrayIcon,
+)
 
 from .. import __version__, render
 from ..config import ConfigService
@@ -380,6 +395,51 @@ class TrayApp(QObject):
         self._detail.activateWindow()
         self.fetch_all_async()
 
+    def open_detail_for(self, instance_id: Optional[str] = None) -> None:
+        """点任务栏账号块/菜单「查看详情」:只显示这个账号。
+
+        详情窗已开着时直接切换账号,不把它关掉再开;窗口不可见时再显示。
+        """
+        if instance_id and self.config.instance(instance_id) is None:
+            return
+        # 点账号块开详情时,悬停卡片立刻收起,不能盖在详情窗上
+        self._overlay.hide_tooltip()
+        if instance_id:
+            with self._config_write():
+                self.config.set_active_instance_id(instance_id)
+        if self._detail is None:
+            self._detail = DetailWindow(self)
+        if instance_id:
+            self._detail.show_account(instance_id)
+        else:
+            self._ensure_detail_visible()
+        self._detail.activateWindow()
+        self._detail.raise_()
+        if (
+            instance_id
+            and self.config.is_configured(instance_id)
+            and self.data(instance_id) is None
+        ):
+            self.fetch_instance_async(instance_id)
+        self.fetch_all_async()
+
+    def _open_config_for(self, instance_id: str) -> None:
+        """菜单「配置…」:打开该账号的配置面板"""
+        if self.config.instance(instance_id) is None:
+            return
+        self.open_detail_for(instance_id)
+        if self._detail is not None:
+            self._detail._open_config(instance_id)
+
+    def _relogin_account(self, instance_id: str) -> None:
+        """菜单「重新登录…」:直接进配置面板并开浏览器登录(cookie 型平台)"""
+        inst = self.config.instance(instance_id)
+        if inst is None or not inst.platform_type.cookie_based():
+            return
+        self._open_config_for(instance_id)
+        if self._detail is not None:
+            self._detail._open_login(inst.platform_type)
+
     def _reload_detail(self) -> None:
         if self._detail is not None and self._detail.isVisible():
             self._detail.reload()
@@ -387,23 +447,49 @@ class TrayApp(QObject):
     # ------------------------------------------------------------ 右键菜单
 
     def _show_menu(self) -> None:
-        """右键出菜单;aboutToShow 时整体重建,数据/配置变化无需手动同步"""
+        """右键出菜单:先整体建好再 popup。
+
+        旧写法在 aboutToShow 里 clear + 重建,菜单已经显示出来又被清空重画,
+        视觉上就是一闪。现在新建的菜单一次性建好,并夹到任务栏上方。
+        """
         menu = QMenu()
-        menu.aboutToShow.connect(lambda: self._populate_menu(menu))
+        self._populate_menu(menu)
+        menu.adjustSize()
         self._menu = menu  # 持有引用,防菜单显示期间被 GC
-        menu.popup(QCursor.pos())
+        menu.popup(self._clamped_menu_pos(menu))
+
+    @staticmethod
+    def _clamped_menu_pos(menu: QMenu) -> QPoint:
+        """菜单定位:跟随鼠标,但整体夹在任务栏上方的可用区域里"""
+        pos = QCursor.pos()
+        screen = QGuiApplication.screenAt(pos) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return pos
+        geo = screen.availableGeometry()
+        size = menu.sizeHint()
+        x = max(geo.left() + 4, min(pos.x(), geo.right() - size.width() - 4))
+        y = pos.y()
+        if y + size.height() > geo.bottom() - 4:
+            y = max(geo.top() + 4, geo.bottom() - size.height() - 4)
+        return QPoint(x, y)
 
     def _populate_menu(self, menu: QMenu) -> None:
         i18n = get_i18n()
         cfg = self.config
+        style = QApplication.style()
         menu.clear()
 
-        refresh_now = menu.addAction(i18n.t("menu.refreshNow"))
+        refresh_now = menu.addAction(
+            style.standardIcon(QStyle.SP_BrowserReload), i18n.t("menu.refreshNow")
+        )
         refresh_now.triggered.connect(self._on_refresh_now)
         menu.addSeparator()
 
         # 显示设置 ▸(已用/剩余互斥)
-        display_menu = menu.addMenu(i18n.t("menu.displaySettings"))
+        display_menu = menu.addMenu(
+            style.standardIcon(QStyle.SP_FileDialogListView),
+            i18n.t("menu.displaySettings"),
+        )
         mode = cfg.display_mode()
         for mode_key, text_key in (("used", "menu.showUsed"), ("remaining", "menu.showRemaining")):
             act = display_menu.addAction(i18n.t(text_key))
@@ -414,13 +500,14 @@ class TrayApp(QObject):
                 lambda checked=False, m=mode_key, sub=display_menu: self._set_display_mode(m, sub)
             )
 
-        # 任务栏数字面板开关(主显示,默认开)
-        overlay_act = menu.addAction(i18n.t("menu.taskbarOverlay"))
+        # 任务栏数字面板 + 位置 + 百分号
+        overlay_act = menu.addAction(
+            style.standardIcon(QStyle.SP_DesktopIcon), i18n.t("menu.taskbarOverlay")
+        )
         overlay_act.setCheckable(True)
         overlay_act.setChecked(cfg.overlay_enabled())
         overlay_act.triggered.connect(lambda checked=False: self._toggle_overlay(checked))
 
-        # 面板位置:靠任务栏左端 / 靠通知区右端(想放哪放哪)
         anchor_menu = menu.addMenu(i18n.t("menu.overlayPosition"))
         anchor = cfg.overlay_anchor()
         for key, text_key in (("left", "menu.overlayPosition.left"), ("right", "menu.overlayPosition.right")):
@@ -431,27 +518,29 @@ class TrayApp(QObject):
                 lambda checked=False, a=key, sub=anchor_menu: self._set_overlay_anchor(a, sub)
             )
 
-        # 嵌入任务栏 / 浮层 两种形态切换
-        embed_act = menu.addAction(i18n.t("menu.overlayEmbedded"))
-        embed_act.setCheckable(True)
-        embed_act.setChecked(cfg.overlay_embedded())
-        embed_act.triggered.connect(lambda checked=False: self._toggle_overlay_embedded(checked))
-
-        # 百分号开关(对标 TrafficMonitor 的「不显示百分号」)
         pct_act = menu.addAction(i18n.t("menu.showPercent"))
         pct_act.setCheckable(True)
         pct_act.setChecked(cfg.show_percent())
         pct_act.triggered.connect(lambda checked=False: self._toggle_show_percent(checked))
-
-        # 托盘图标开关(默认关:面板已承载全部功能,托盘图标只算备用入口)
-        tray_act = menu.addAction(i18n.t("menu.trayIcon"))
-        tray_act.setCheckable(True)
-        tray_act.setChecked(cfg.tray_icon_enabled())
-        tray_act.triggered.connect(lambda checked=False: self._toggle_tray_icon(checked))
         menu.addSeparator()
 
-        # 刷新间隔 ▸(互斥;改后重置定时器)
-        interval_menu = menu.addMenu(i18n.t("menu.refreshInterval"))
+        # 账号 ▸:查看详情 / 配置 / 重新登录 / 启用 / 改名 / 排序 / 删除 / 添加
+        accounts_menu = menu.addMenu(
+            style.standardIcon(QStyle.SP_FileDialogDetailedView),
+            i18n.t("menu.accounts"),
+        )
+        self._fill_accounts_menu(accounts_menu)
+
+        # 显示指标 ▸(按实例分组,最多 2 个)
+        metrics_menu = menu.addMenu(i18n.t("menu.enabledMetrics"))
+        self._fill_metrics_menu(metrics_menu)
+        menu.addSeparator()
+
+        # 设置 ▸
+        settings_menu = menu.addMenu(
+            style.standardIcon(QStyle.SP_ComputerIcon), i18n.t("menu.settings")
+        )
+        interval_menu = settings_menu.addMenu(i18n.t("menu.refreshInterval"))
         current = cfg.refresh_interval()
         for interval, text_key in _REFRESH_ITEMS:
             act = interval_menu.addAction(i18n.t(text_key))
@@ -462,16 +551,7 @@ class TrayApp(QObject):
                 lambda checked=False, iv=interval, sub=interval_menu: self._set_refresh_interval(iv, sub)
             )
 
-        # 平台 ▸(每实例一个子菜单 + 添加账号)
-        platform_menu = menu.addMenu(i18n.t("menu.platform"))
-        self._fill_platform_menu(platform_menu)
-
-        # 显示指标 ▸(按实例分组,最多 2 个)
-        metrics_menu = menu.addMenu(i18n.t("menu.enabledMetrics"))
-        self._fill_metrics_menu(metrics_menu)
-
-        # 语言 ▸(即时生效)
-        language_menu = menu.addMenu(i18n.t("menu.language"))
+        language_menu = settings_menu.addMenu(i18n.t("menu.language"))
         locale = cfg.locale()
         for code, text_key in (("en", "menu.lang.en"), ("zh-Hans", "menu.lang.zh")):
             act = language_menu.addAction(i18n.t(text_key))
@@ -480,21 +560,68 @@ class TrayApp(QObject):
             act.triggered.connect(lambda checked=False, c=code, sub=language_menu: self._set_locale(c, sub))
             act.setData(code)
 
-        about = menu.addAction(i18n.t("menu.about"))
+        tray_act = settings_menu.addAction(i18n.t("menu.trayIcon"))
+        tray_act.setCheckable(True)
+        tray_act.setChecked(cfg.tray_icon_enabled())
+        tray_act.triggered.connect(lambda checked=False: self._toggle_tray_icon(checked))
+
+        settings_menu.addSeparator()
+        about = settings_menu.addAction(
+            style.standardIcon(QStyle.SP_MessageBoxInformation), i18n.t("menu.about")
+        )
         about.triggered.connect(self._show_about)
+
         menu.addSeparator()
-        quit_act = menu.addAction(i18n.t("menu.quit"))
+        quit_act = menu.addAction(
+            style.standardIcon(QStyle.SP_DialogCloseButton), i18n.t("menu.quit")
+        )
         quit_act.triggered.connect(QApplication.quit)
 
-    def _fill_platform_menu(self, platform_menu: QMenu) -> None:
+    def _account_color(self, inst) -> str:
+        data = self.data(inst.id)
+        if data is None and self.error(inst.id) is not None:
+            return _STATUS_COLORS[render.COLOR_RED]
+        return _STATUS_COLORS.get(render.status_color(data), _STATUS_COLORS[render.COLOR_GRAY])
+
+    def _fill_accounts_menu(self, accounts_menu: QMenu) -> None:
         i18n = get_i18n()
         cfg = self.config
+        style = QApplication.style()
         instances = cfg.instances()
         enabled_count = sum(1 for it in instances if cfg.is_enabled(it.id))
 
         for index, inst in enumerate(instances):
-            sub = platform_menu.addMenu(inst.display_name)
+            sub = accounts_menu.addMenu(_dot_icon(self._account_color(inst)), inst.display_name)
             enabled = cfg.is_enabled(inst.id)
+
+            details = sub.addAction(
+                style.standardIcon(QStyle.SP_FileDialogDetailedView), i18n.t("menu.details")
+            )
+            details.triggered.connect(
+                lambda checked=False, iid=inst.id: self.open_detail_for(iid)
+            )
+
+            configure = sub.addAction(
+                style.standardIcon(QStyle.SP_DialogSaveButton), i18n.t("menu.configurePlatform")
+            )
+            configure.triggered.connect(
+                lambda checked=False, iid=inst.id: self._open_config_for(iid)
+            )
+
+            if inst.platform_type.cookie_based():
+                relogin = sub.addAction(i18n.t("menu.renewSession"))
+                relogin.triggered.connect(
+                    lambda checked=False, iid=inst.id: self._relogin_account(iid)
+                )
+            sub.addSeparator()
+
+            pin_act = sub.addAction(i18n.t("menu.pinToStatusBar"))
+            pin_act.setCheckable(True)
+            pin_act.setChecked(cfg.is_pinned(inst.id))
+            pin_act.setEnabled(enabled)
+            pin_act.triggered.connect(
+                lambda checked=False, iid=inst.id: self._toggle_pinned(iid)
+            )
 
             enable_act = sub.addAction(i18n.t("menu.platformEnabled"))
             enable_act.setCheckable(True)
@@ -503,31 +630,33 @@ class TrayApp(QObject):
                 lambda checked=False, iid=inst.id, act=enable_act: self._toggle_enabled(iid, act)
             )
 
-            pin_act = sub.addAction(i18n.t("menu.pinToStatusBar"))
-            pin_act.setCheckable(True)
-            pin_act.setChecked(cfg.is_pinned(inst.id))
-            pin_act.setEnabled(enabled)  # 未启用的实例不可钉选
-            pin_act.triggered.connect(lambda checked=False, iid=inst.id: self._toggle_pinned(iid))
-
             rename_act = sub.addAction(i18n.t("menu.renameAccount"))
             rename_act.triggered.connect(lambda checked=False, iid=inst.id: self._rename_account(iid))
 
-            left_act = sub.addAction(i18n.t("menu.moveLeft"))
-            left_act.setEnabled(index > 0)  # 首个不可再左移
+            left_act = sub.addAction(
+                style.standardIcon(QStyle.SP_ArrowLeft), i18n.t("menu.moveLeft")
+            )
+            left_act.setEnabled(index > 0)
             left_act.triggered.connect(lambda checked=False, iid=inst.id: self._move_account(iid, -1))
 
-            right_act = sub.addAction(i18n.t("menu.moveRight"))
-            right_act.setEnabled(index < len(instances) - 1)  # 末个不可再右移
+            right_act = sub.addAction(
+                style.standardIcon(QStyle.SP_ArrowRight), i18n.t("menu.moveRight")
+            )
+            right_act.setEnabled(index < len(instances) - 1)
             right_act.triggered.connect(lambda checked=False, iid=inst.id: self._move_account(iid, 1))
 
-            delete_act = sub.addAction(i18n.t("menu.deleteAccount"))
-            # 最后一个启用实例不可删(删完没有任何账号可显示,对齐 macOS)
+            delete_act = sub.addAction(
+                style.standardIcon(QStyle.SP_TrashIcon), i18n.t("menu.deleteAccount")
+            )
             delete_act.setEnabled(not (enabled and enabled_count <= 1))
             delete_act.triggered.connect(lambda checked=False, iid=inst.id: self._delete_account(iid))
 
-        platform_menu.addSeparator()
+        accounts_menu.addSeparator()
+        add_menu = accounts_menu.addMenu(
+            style.standardIcon(QStyle.SP_FileDialogNewFolder), i18n.t("menu.platform")
+        )
         for platform in PlatformType:
-            add_act = platform_menu.addAction(i18n.t(f"menu.addAccount.{platform.value}"))
+            add_act = add_menu.addAction(i18n.t(f"menu.addAccount.{platform.value}"))
             add_act.triggered.connect(lambda checked=False, p=platform: self._add_account(p))
 
     def _fill_metrics_menu(self, metrics_menu: QMenu) -> None:
@@ -905,10 +1034,22 @@ def _wrap_error(e: Exception) -> PlatformError:
 
 
 def _STARTUP_MESSAGE() -> str:
-    """启动气泡文案。
-
-    i18n key 写集受限(本轮只允许加 common.save),中英文各给一句字面量兜底。
-    """
+    """启动气泡文案。"""
     if get_i18n().locale.startswith("zh"):
         return "QuotaBar 已在系统托盘运行"
     return "QuotaBar is running in the system tray"
+
+
+def _dot_icon(color: str, size: int = 10) -> QIcon:
+    """菜单里的账号状态点"""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(color))
+        painter.drawEllipse(1, 1, size - 2, size - 2)
+    finally:
+        painter.end()
+    return QIcon(pixmap)

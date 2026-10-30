@@ -29,6 +29,28 @@ def taskbar_rect() -> Optional[RECT]:
         return None
 
 
+def set_dark_title_bar(hwnd, dark: bool = True) -> bool:
+    """把标题栏切成深色(Windows 10 1809+ / 11 的 DwmSetWindowAttribute)。
+
+    Qt 的深色 stylesheet 只能画客户区,原生标题栏仍跟系统应用模式走;
+    这里补一刀,让深色详情窗的标题栏不突兀。失败静默(老系统/远程桌面)。
+    """
+    try:
+        dwm = ctypes.windll.dwmapi
+        value = ctypes.c_int(1 if dark else 0)
+        for attr in (20, 19):  # 20=Win10 20H1+, 19=更早的预览版
+            if dwm.DwmSetWindowAttribute(
+                ctypes.c_void_p(hwnd),
+                ctypes.c_uint(attr),
+                ctypes.byref(value),
+                ctypes.sizeof(value),
+            ) == 0:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def taskbar_top_edge(screen_geo) -> Optional[int]:
     """底部任务栏的上沿坐标;仅当任务栏横跨该屏幕底部时返回,否则 None。
 

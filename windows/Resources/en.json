@@ -132,5 +132,9 @@
   "menu.trayTooltipMore": "…%d accounts total",
   "detail.hourShort": "h",
   "detail.minuteShort": "m",
-  "detail.dayShort": "d"
+  "detail.dayShort": "d",
+  "popover.used": "Used",
+  "menu.details": "Details",
+  "menu.accounts": "Accounts",
+  "menu.settings": "Settings"
 }
