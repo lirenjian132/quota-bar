@@ -26,6 +26,7 @@
 - 开机启动项：状态栏右键菜单开关（基于 SMAppService，自 v2.0.4 沿用保留）
 
 ### Changed
+- **钉选块位置固定**：每个状态栏块设 `autosaveName`（`quotabar.pinned.<实例id>`），⌘ 拖动后的位置跨重启/重建/账号增删永久记忆；修复"改实例顺序不生效、显示位置被 macOS 历史槽位锁死"及"其他 app 的块插入中间"的加剧问题
 - **状态栏块标识改为染色字母**：原「圆点 + 数值」改为「实例名缩写 + 数值」（如 M1/M2/G/S），字母颜色即健康预警（红黄绿语义不变）；块宽贴合内容（去掉固定最小/理想宽、`minimumItemWidth` 36→24、内边距收紧），多账号块间更紧凑
 - 平台精简：移除 DeepSeek / MiMo；Stepfun 由旧内部接口方案替换为新契约实现（Step Code 开源客户端 gRPC-Connect），现支持 MiniMax + GLM + TokenRhythm + Stepfun
 - API key / 会话凭据存储改用应用私有文件（FileKeyStore，文件权限 0600），彻底消除钥匙串登录密码弹窗：启动时自动从 Keychain 一次性迁移（仅最后一次授权），此后不再触碰 Keychain

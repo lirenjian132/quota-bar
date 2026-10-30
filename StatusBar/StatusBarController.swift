@@ -752,6 +752,9 @@ class StatusBarController {
 
     private func createPinnedItem(for instance: PlatformInstance) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // 按实例 id 固定槽位: macOS 跨启动记忆 status item 位置,
+        // 不加 autosaveName 时位置被历史锁死 (改实例顺序不生效).
+        item.autosaveName = "quotabar.pinned.\(instance.id)"
 
         let view = RightClickStatusBarView(rootView: StatusBarView(
             platformData: viewModel.platformData[instance.id],
