@@ -39,6 +39,7 @@ from .winutil import (
     find_notify_area,
     find_taskbar_host,
     move_in_parent,
+    taskbar_above_window,
     taskbar_rect,
 )
 
@@ -505,7 +506,7 @@ class StatusOverlay(QWidget):
     # ------------------------------------------------------------ 守护
 
     def _ensure_visible(self) -> None:
-        """守护:嵌入模式下探测 explorer 重启;浮层模式不再周期性抢 Z 序。"""
+        """守护:嵌入模式下探测 explorer 重启;浮层模式只在被任务栏压住时重新置顶。"""
         if not self._tray.config.overlay_enabled():
             return  # 用户已关掉面板:守护不能把它带回来
         if self._embed_host is not None:
@@ -516,10 +517,22 @@ class StatusOverlay(QWidget):
             return
         if self._tray.config.overlay_embedded():
             self._retry_attach()
-        # 浮层模式不再每 500ms 无条件/条件抢一次 Z 序:透明面板的间隙会让
-        # WindowFromPoint 返回任务栏,任何"遮挡检测"都会误判,结果还是周期性
-        # SetWindowPos → 闪。置顶只在显示/拖动/切换形态时做一次(见 showEvent)。
-        # 悬停卡片同样只在 show_accounts 时提一次顶。
+            return
+        # 浮层模式:关闭其它置顶窗口(详情窗/对话框)后 Windows 会重排 topmost 层,
+        # 任务栏可能跑到面板上面 → 面板看起来"消失"。这里只做 Z 序比较,
+        # 真被压住才 SetWindowPos:正常状态零操作,不会引入周期性闪烁。
+        self.raise_above_taskbar()
+
+    def raise_above_taskbar(self) -> None:
+        """任务栏压到面板上面时把面板重新置顶(纯条件触发,幂等)"""
+        if self._embed_host is not None or not self.isVisible():
+            return
+        try:
+            hwnd = int(self.winId())
+        except (TypeError, RuntimeError):
+            return
+        if taskbar_above_window(hwnd):
+            ensure_topmost(hwnd)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)

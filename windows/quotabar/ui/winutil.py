@@ -91,6 +91,34 @@ def taskbar_top_edge(screen_geo) -> Optional[int]:
     return None
 
 
+def taskbar_above_window(hwnd) -> bool:
+    """任务栏是否压在本窗口上面(Z 序)。纯查询,不改变任何窗口顺序。
+
+    关闭其它置顶窗口(如详情窗)后,Windows 会重排 topmost 层,任务栏可能跑到
+    面板上面——面板就"消失"了。用这个判断只在真被压住时才重新置顶,
+    正常状态下零 SetWindowPos 调用,不会引入周期性闪烁。
+    """
+    try:
+        user32 = ctypes.windll.user32
+        user32.GetWindow.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        user32.GetWindow.restype = ctypes.c_void_p
+        GW_HWNDPREV = 3
+        cur = ctypes.c_void_p(int(hwnd))
+        # 上限给足(1024):正常被压住时任务栏就在几个窗口之内,但某些操作
+        # (窗口被丢到 Z 序底部)会让任务栏在几百个窗口之上,设小上限会漏判
+        for _ in range(1024):
+            cur = user32.GetWindow(cur, GW_HWNDPREV)
+            if not cur:
+                return False
+            buf = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(cur, buf, 64)
+            if buf.value in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def embed_in_taskbar(hwnd) -> Optional[int]:
     """把窗口嵌入任务栏,成为任务栏自己的元素。
 

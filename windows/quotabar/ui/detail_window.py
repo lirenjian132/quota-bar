@@ -14,7 +14,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Optional
 
-from PyQt5.QtCore import QEventLoop, QObject, QMimeData, QSize, Qt, pyqtSignal
+from PyQt5.QtCore import QEventLoop, QObject, QMimeData, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import (
     QColor,
     QCursor,
@@ -237,6 +237,19 @@ class DetailWindow(QDialog):
         self.activateWindow()
 
     # ------------------------------------------------------------ 定位
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        # 关闭详情窗会让 Windows 重排 topmost 层:任务栏可能跑到任务栏面板上面,
+        # 面板看起来"消失"。立即补一次条件置顶(只比较 Z 序,正常状态零操作);
+        # 0ms 是为了等系统完成重排,500ms 守护再兜底。
+        QTimer.singleShot(0, self._raise_overlay_above_taskbar)
+
+    def _raise_overlay_above_taskbar(self) -> None:
+        try:
+            self._tray._overlay.raise_above_taskbar()
+        except Exception:
+            pass
 
     def paintEvent(self, event) -> None:
         """强制自绘底色:不依赖原生样式是否吃 palette/stylesheet"""
