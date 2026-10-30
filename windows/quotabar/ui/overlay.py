@@ -38,6 +38,7 @@ from .winutil import (
     ensure_topmost,
     find_notify_area,
     find_taskbar_host,
+    foreground_covers_rect,
     move_in_parent,
     taskbar_above_window,
     taskbar_rect,
@@ -459,6 +460,8 @@ class StatusOverlay(QWidget):
         self._embedded = False
         self._embed_host: Optional[int] = None
         self._last_attach_try: float = 0.0
+        #: 因全屏应用(电影/游戏)而主动让位中;退出全屏后自动恢复
+        self._hidden_for_fullscreen = False
         self._tip = _TooltipWindow()
         self._tip.on_enter = self._tip_entered
         self._tip.on_leave = self._tip_left
@@ -506,9 +509,12 @@ class StatusOverlay(QWidget):
     # ------------------------------------------------------------ 守护
 
     def _ensure_visible(self) -> None:
-        """守护:嵌入模式下探测 explorer 重启;浮层模式只在被任务栏压住时重新置顶。"""
+        """守护:全屏应用让位 / 嵌入模式探测 explorer 重启 / 被任务栏压住时重新置顶。"""
         if not self._tray.config.overlay_enabled():
             return  # 用户已关掉面板:守护不能把它带回来
+        # 前台有全屏应用(电影/游戏)时收起面板,避免压在画面上;退出后恢复
+        if self.sync_fullscreen():
+            return
         if self._embed_host is not None:
             if find_taskbar_host() != self._embed_host:
                 self._reattach()
@@ -522,6 +528,29 @@ class StatusOverlay(QWidget):
         # 任务栏可能跑到面板上面 → 面板看起来"消失"。这里只做 Z 序比较,
         # 真被压住才 SetWindowPos:正常状态零操作,不会引入周期性闪烁。
         self.raise_above_taskbar()
+
+    def sync_fullscreen(self) -> bool:
+        """前台全屏应用覆盖面板所在屏幕时收起面板,退出全屏后恢复。
+
+        返回 True 表示当前应让位(面板不该显示)。
+        """
+        screen = QGuiApplication.screenAt(self.pos()) or QGuiApplication.primaryScreen()
+        covered = False
+        if screen is not None:
+            geo = screen.geometry()
+            covered = foreground_covers_rect(geo.left(), geo.top(), geo.right(), geo.bottom())
+        if covered:
+            if not self._hidden_for_fullscreen:
+                self._hidden_for_fullscreen = True
+                self.hide_tooltip()
+                self.hide()
+            return True
+        if self._hidden_for_fullscreen:
+            self._hidden_for_fullscreen = False
+            if self._tray.config.overlay_enabled():
+                self.show()
+                ensure_topmost(int(self.winId()))
+        return False
 
     def raise_above_taskbar(self) -> None:
         """任务栏压到面板上面时把面板重新置顶(纯条件触发,幂等)"""

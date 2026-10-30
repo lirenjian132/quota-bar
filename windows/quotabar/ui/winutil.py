@@ -91,6 +91,54 @@ def taskbar_top_edge(screen_geo) -> Optional[int]:
     return None
 
 
+#: 这些窗口类不算"全屏应用":桌面、任务栏、开始菜单/任务视图等 shell 界面
+_SHELL_CLASSES = {
+    "Progman",
+    "WorkerW",
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    "Windows.UI.Core.CoreWindow",
+    "MultitaskingViewFrame",
+    "ForegroundStaging",
+}
+
+
+def foreground_covers_rect(left: int, top: int, right: int, bottom: int) -> bool:
+    """前台窗口是否完全覆盖给定屏幕矩形(全屏看电影/打游戏)。
+
+    用于让任务栏面板在他人全屏时让位:独占全屏(DirectX)系统本来就不会合成
+    我们的窗口,但无边框全屏/播放器全屏/浏览器 F11 是普通窗口,置顶面板会
+    压在画面上——必须主动收起。排除 shell(桌面/任务栏/开始菜单)与自身进程。
+    """
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return False
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(pid))
+        # GetCurrentProcessId 在 kernel32 里,不在 user32(写错会抛 AttributeError,
+        # 被 except 吞掉后检测永远返回 False)
+        if pid.value == ctypes.windll.kernel32.GetCurrentProcessId():
+            return False  # 自己的窗口(详情窗/菜单)不触发让位
+        buf = ctypes.create_unicode_buffer(128)
+        user32.GetClassNameW(ctypes.c_void_p(hwnd), buf, 128)
+        if buf.value in _SHELL_CLASSES:
+            return False
+        rect = RECT()
+        if not user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(rect)):
+            return False
+        tol = 2  # 允许 2px 误差(部分播放器/游戏会略微超出或差一像素)
+        return (
+            rect.left <= left + tol
+            and rect.top <= top + tol
+            and rect.right >= right - tol
+            and rect.bottom >= bottom - tol
+        )
+    except Exception:
+        return False
+
+
 def taskbar_above_window(hwnd) -> bool:
     """任务栏是否压在本窗口上面(Z 序)。纯查询,不改变任何窗口顺序。
 

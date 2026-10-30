@@ -127,6 +127,7 @@ class TrayApp(QObject):
         if self.config.overlay_enabled():
             self._overlay.show()
             self._overlay.attach()   # 嵌入任务栏(在 show 之后,否则会被 Qt 重置)
+        self._overlay.sync_fullscreen()  # 启动时若正有全屏应用,不闪一下再收起
         self._overlay.refresh()
         self.fetch_all_async()
 

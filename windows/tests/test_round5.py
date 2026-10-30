@@ -1053,3 +1053,13 @@ def test_refresh_cooldown_blocks_repeat_and_clears_on_new_credential(tmp_path, m
     manager.clear_refresh_cooldown(inst.id)
     manager._refresh_stepfun_if_needed(inst.id)
     assert len(calls) == 2  # 新凭据后恢复尝试
+
+
+def test_fullscreen_detection_no_false_positive(qapp, tray):
+    """没有全屏前台窗口时不能误判,否则面板会无故消失"""
+    from quotabar.ui.winutil import foreground_covers_rect
+
+    # 一个任何窗口都不可能覆盖的屏幕外矩形
+    assert foreground_covers_rect(-100000, -100000, -99999, -99999) is False
+    assert tray._overlay.sync_fullscreen() is False
+    assert tray._overlay._hidden_for_fullscreen is False
