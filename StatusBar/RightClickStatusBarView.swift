@@ -53,6 +53,15 @@ class RightClickStatusBarView: NSView {
         hostingView.rootView = rootView
     }
 
+    /// 强制 SwiftUI 重算布局并上报新尺寸: 长期存活的 hostingView 在内容变窄后
+    /// fittingSize 可能冻结在旧值 (线上实测: 值 87→0 后一直返回旧宽), 显式
+    /// 失效 intrinsic 再整体布局, 给测量一次重算机会.
+    func refreshLayout() {
+        hostingView.invalidateIntrinsicContentSize()
+        hostingView.needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
     override func mouseDown(with event: NSEvent) {
         highlightView.isHidden = false
         if event.type == .rightMouseDown || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)) {

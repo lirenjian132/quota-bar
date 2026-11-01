@@ -149,8 +149,13 @@ struct StatusBarView: View {
             Text(accountBadge)
                 .font(.system(size: 13, weight: .bold, design: .monospaced))
                 .foregroundColor(statusColor)
+                // badge 是账号身份标识, 按自然宽渲染且优先保宽: 宽度不足时由
+                // 数值侧 (有 minimumScaleFactor 可缩) 让位, badge 永不截断成 "…".
+                // 不设 minWidth: badge 宽度完全由 fixedSize 的自然宽决定,
+                // 避免 minWidth 与自然宽不一致时引入第二个被压缩的锚点.
+                .fixedSize()
                 .lineLimit(1)
-                .frame(minWidth: 15)
+                .layoutPriority(1)
 
             // 0 / 1 个 metric: 大字居中; 2 个: 当前上下两行布局.
             if let secondary = secondaryText {

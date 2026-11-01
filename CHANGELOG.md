@@ -40,6 +40,7 @@
 - 版本号体系：合并 v2.0.4 的发布线，build number 单调递增（→ 7）
 
 ### Fixed
+- **状态栏块 badge 被截成省略号**（M1/M2 数值变化后显示 `… 0` 这类）：块宽恰好贴合内容时零富余，badge（无缩放能力）被亚像素偏差挤成 "…"，账号身份丢失；且长期存活的 hostingView 在内容变窄后 `fittingSize` 会冻结在旧值（lldb 实测：值 87→0 后块宽卡在旧内容宽度）。修复：badge `fixedSize + layoutPriority(1)`（并移除 `minWidth` 锚点）恒按自然宽渲染，宽度不足由可缩放的数值侧让位；宽度计算 `ceil + 2pt` 余量 + 地板 24→27 + 显式失效 intrinsic 的主队列 FIFO 复测自愈。另修 `updateStatusBarView()` 换内容不重测宽度（切显示模式 "0"↔"100" 宽度跳变 ~17pt 同样会截断）
 - **迁移安全加固**：Keychain 条目只有在文件写入确认成功后才删除（曾因测试宿主误执行迁移销毁过用户 key，已加双层测试守卫 + 写失败保留源数据 + 回归测试）
 - **Stepfun 非 credit 套餐状态栏恒显 "--" 无法自救**：右键菜单「显示指标」可勾选项补齐 `five_hour`/`weekly_limit`（默认勾选仍为 `credits`，credit 套餐是主场景）；勾选与产出无交集时状态栏回退显示前 2 个指标（防呆，不再恒显 "--" 逼用户翻菜单）
 - **MiniMax/GLM「显示指标」清单与 service 产出错位**：MiniMax 周额度三态（标准 `weekly_limit` / 加成 `weekly_limit_boosted` / 无限 `weekly_limit_unlimited`）全部可勾（此前加成/无限套餐用户勾"周额度"被精确匹配过滤 → 状态栏 "--"），移除 MiniMax 不产出的"MCP 月度"死选项；GLM 清单为 5 小时 + 周限额 + MCP 月度

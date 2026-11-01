@@ -3,7 +3,33 @@ import SwiftUI
 
 @MainActor
 class StatusBarController {
-    private static let minimumItemWidth: CGFloat = 24
+    // 块最小宽度: 容得下 2 字符 badge (自然宽 17) + 间距 1 + 缩放后数字
+    // (数值侧 minimumScaleFactor 0.7, 单字符 ≥6.3) + padding 2 = 26.3, 取 27.
+    // 兜底测量失效: 长期存活的 hostingView 在内容变窄后 fittingSize 可能冻结
+    // 在旧值 (线上实测), 宽度再怎么写小也不该截掉 badge. 3 字符 badge
+    // (默认账号名 Min/GLM 等, 自然宽 25) 超出地板覆盖: badge 靠 fixedSize
+    // 保身份, 该场景下由数值侧压缩让位.
+    nonisolated private static let minimumItemWidth: CGFloat = 27
+
+    /// item 宽度 = max(下限, ceil(fitting) + 2pt 余量). 余量防"零富余截断":
+    /// 内容理想宽常为精确值 (线上实测 "M2 100" 恰 46.0), ceil 后零富余, 亚像素
+    /// 偏差即让 badge (无缩放能力) 分不到自然宽而被截成 "…".
+    nonisolated static func fittedLength(forFittingWidth width: CGFloat) -> CGFloat {
+        max(minimumItemWidth, ceil(width) + 2)
+    }
+
+    /// 把 item 宽度贴合 view 当前内容: 同步测一次 + 主队列 FIFO 复测一次.
+    /// 两处都读 view 当前内容, 不依赖调用时序; 复测兜底一次性的异常读数.
+    private func applyFittedLength(to item: NSStatusItem, view: RightClickStatusBarView) {
+        view.refreshLayout()
+        item.length = Self.fittedLength(forFittingWidth: view.fittingSize.width)
+        // DispatchQueue (而非 Task): 主队列 FIFO, 连续多次排队不会乱序回写旧值
+        DispatchQueue.main.async { [weak view, weak item] in
+            guard let view, let item else { return }
+            view.refreshLayout()
+            item.length = Self.fittedLength(forFittingWidth: view.fittingSize.width)
+        }
+    }
 
     private var statusItem: NSStatusItem
     private var statusBarView: RightClickStatusBarView
@@ -49,12 +75,7 @@ class StatusBarController {
             self?.showDisplaySettingsSubmenu(from: nil)
         }
 
-        statusBarView.layoutSubtreeIfNeeded()
-        let fittedWidth = max(
-            StatusBarController.minimumItemWidth,
-            ceil(statusBarView.fittingSize.width)
-        )
-        statusItem.length = fittedWidth
+        applyFittedLength(to: statusItem, view: statusBarView)
 
         // 钉选平台监听: 平台启用状态或钉选状态变化时重建 item
         NotificationCenter.default.addObserver(
@@ -655,7 +676,9 @@ class StatusBarController {
             displayMode: ConfigService.shared.displayMode,
             enabledMetrics: ConfigService.shared.enabledMetrics(for: active)
         ))
-        statusBarView.layoutSubtreeIfNeeded()
+        // 换内容必须重测宽度: 显示模式切换会让文本宽度跳变 (如 "0" ↔ "100"
+        // 差 ~17pt), 只 layout 不改 length 会把内容挤出截断
+        applyFittedLength(to: statusItem, view: statusBarView)
     }
 
     // 单平台数据更新 (兼容旧 delegate 回调).
@@ -686,11 +709,7 @@ class StatusBarController {
             displayMode: ConfigService.shared.displayMode,
             enabledMetrics: ConfigService.shared.enabledMetrics(for: viewModel.activeInstance)
         ))
-        statusBarView.layoutSubtreeIfNeeded()
-        statusItem.length = max(
-            StatusBarController.minimumItemWidth,
-            ceil(statusBarView.fittingSize.width)
-        )
+        applyFittedLength(to: statusItem, view: statusBarView)
     }
 
     // 更新单个钉选 item 的内容.
@@ -702,13 +721,9 @@ class StatusBarController {
             displayMode: ConfigService.shared.displayMode,
             enabledMetrics: ConfigService.shared.enabledMetrics(for: instance)
         ))
-        view.layoutSubtreeIfNeeded()
 
         if let item = pinnedItems[instance.id] {
-            item.length = max(
-                StatusBarController.minimumItemWidth,
-                ceil(view.fittingSize.width)
-            )
+            applyFittedLength(to: item, view: view)
         }
     }
 
@@ -782,11 +797,7 @@ class StatusBarController {
             self?.showDisplaySettingsSubmenu(from: item)
         }
 
-        view.layoutSubtreeIfNeeded()
-        item.length = max(
-            StatusBarController.minimumItemWidth,
-            ceil(view.fittingSize.width)
-        )
+        applyFittedLength(to: item, view: view)
 
         pinnedItems[instance.id] = item
         pinnedViews[instance.id] = view

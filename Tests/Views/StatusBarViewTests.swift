@@ -395,4 +395,51 @@ final class StatusBarViewTests: XCTestCase {
         )
         XCTAssertEqual(StatusBarViewHelper.statusColor(for: healthy), .green)
     }
+
+    // MARK: - 状态栏块宽度 (badge 截断回归)
+
+    // 回归: M1 值降到个位数后 badge "M1" 被截成 "…" — 宽度计算在内容宽之上
+    // 须有富余, 且塌缩测量也有足够高的地板 (见 minimumItemWidth 注释).
+    func testFittedLengthAddsHeadroomAboveContentWidth() {
+        // "M1 0" 内容理想宽实测 ≈ 29 (badge 自然宽 17 + spacing 1 + 数字 9 + padding 2)
+        XCTAssertEqual(StatusBarController.fittedLength(forFittingWidth: 29.0), 31.0)
+        XCTAssertEqual(StatusBarController.fittedLength(forFittingWidth: 35.4), 38.0)
+    }
+
+    func testFittedLengthRespectsMinimumFloor() {
+        // 地板 27: 测量塌缩到 0 也须容得下 2 字符 badge(17) + 间距 1
+        // + 缩放后数字(≥6.3) + padding(2) = 26.3 (防截断阈值, 实测)
+        XCTAssertEqual(StatusBarController.fittedLength(forFittingWidth: 0), 27.0)
+        XCTAssertEqual(StatusBarController.fittedLength(forFittingWidth: 10), 27.0)
+        XCTAssertEqual(StatusBarController.fittedLength(forFittingWidth: 24.5), 27.0)
+    }
+
+    // AppKit 级: 真实 RightClickStatusBarView 的同步测量必须覆盖 badge + 数值宽度,
+    // 且 rootView 换新 (两位数 → 个位数) 后立即测量也不塌缩.
+    func testHostingViewFittingCoversBadgeAndValueWidth() {
+        let makeData: (Double) -> PlatformUsageData = { remaining in
+            PlatformUsageData(
+                platform: .minimax_cn,
+                instanceID: "m1",
+                displayName: "M1",
+                metrics: [UsageMetric(label: "weekly_limit", currentValue: remaining, totalValue: 100, unit: "%", resetTime: nil)],
+                lastUpdated: Date(),
+                isHealthy: true
+            )
+        }
+
+        let view = RightClickStatusBarView(rootView: StatusBarView(
+            platformData: makeData(87), displayMode: .remaining, enabledMetrics: ["weekly_limit"]
+        ))
+        view.layoutSubtreeIfNeeded()
+        // badge "M1"(17) + spacing 1 + "87"(18) + padding 2 ≈ 38, 留字体度量容差
+        XCTAssertGreaterThanOrEqual(view.fittingSize.width, 35.0)
+
+        // 值降到个位数: 实测 ≈ 29; 断言 27 恰在防截断阈值 (26.3) 之上
+        view.update(rootView: StatusBarView(
+            platformData: makeData(0), displayMode: .remaining, enabledMetrics: ["weekly_limit"]
+        ))
+        view.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(view.fittingSize.width, 27.0)
+    }
 }
